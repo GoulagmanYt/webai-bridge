@@ -9,6 +9,7 @@ import { DEFAULT_WS_PORT, resolveBridgePort } from "../extension/session-auth.mj
 
 const require = createRequire(import.meta.url);
 const contentCore = require("../extension/content-core.js");
+const contentFacade = require("../extension/content.js");
 const popupMod = require("../extension/popup.js");
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -122,11 +123,36 @@ assert(
     "protocol.mjs MCP_INSTRUCTIONS enforces closed-loop (loop=continue) and PATCH: contract"
 );
 
-// 6. Verify native upload vectors in content.js
+// 6. Verify native upload vectors in content.js & content-upload.js
 const contentSource = fs.readFileSync(path.join(rootDir, "extension/content.js"), "utf8");
+const contentUploadSource = fs.readFileSync(path.join(rootDir, "extension/content-upload.js"), "utf8");
 assert(contentSource.includes("uploadAttachmentsToDOM"), "content.js implements uploadAttachmentsToDOM");
-assert(contentSource.includes("new DataTransfer()"), "content.js uses native DataTransfer & File API");
-assert(contentSource.includes("ClipboardEvent('paste'"), "content.js supports ClipboardEvent('paste') vector");
+assert(contentUploadSource.includes("new DataTransfer()"), "content-upload.js uses native DataTransfer & File API");
+assert(contentUploadSource.includes("ClipboardEvent('paste'"), "content-upload.js supports ClipboardEvent('paste') vector");
+
+// 7. Verify Obsidian Signal UI & Shadow-DOM Floating Pill contracts
+assert(
+    popupHtml.includes('id="connectionBadge"') &&
+    popupHtml.includes('id="tabModeValue"') &&
+    popupHtml.includes('id="toggleTokenBtn"') &&
+    popupHtml.includes('prefers-reduced-motion'),
+    "popup.html implements Obsidian Signal badges, tab mode telemetry, token toggle, and reduced-motion styles"
+);
+assert(
+    typeof popupMod.resolveConnectionState === "function",
+    "popup.js exports resolveConnectionState helper"
+);
+assert(
+    typeof contentFacade.FloatingBridgePill === "function" &&
+    typeof contentFacade.resolvePillState === "function" &&
+    typeof contentFacade.clampPillPosition === "function",
+    "content.js exports Obsidian Signal FloatingBridgePill, resolvePillState, and clampPillPosition"
+);
+assert(
+    typeof contentCore.BridgeContentRuntime?.prototype?.setDedicated === "function" &&
+    typeof contentCore.BridgeContentRuntime?.prototype?.getStatusSummary === "function",
+    "content-core.js BridgeContentRuntime implements setDedicated and getStatusSummary"
+);
 
 console.log(`\n=== Summary: ${passed} passed, ${failed} failed ===`);
 if (failed > 0) {

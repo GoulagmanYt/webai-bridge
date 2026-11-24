@@ -62,7 +62,7 @@ Yet, when using coding agents inside editors (Antigravity IDE, Cursor, Claude Co
 ```
 [ IDE Split-Screen: Antigravity / Cursor ]              [ Browser Tab: Claude Opus 5.5 / GPT-6 Astra / DeepSeek V4-Pro ]
   1. User prompts: "Refactor auth system"
-  2. IDE Agent invokes consult_orchestrator  -------->   3. Floating status button turns Blue
+  2. IDE Agent invokes consult_orchestrator  -------->   3. Floating status pill turns Amber (Busy)
                                                         4. Project files natively attached (DataTransfer API)
                                                         5. .env & secret keys automatically blocked
   7. Code applied & tests pass automatically <--------   6. Web AI outputs architecture & complete code files
@@ -278,15 +278,16 @@ Copy the bundled `skills/webai-orchestrator` folder into your agent's skills loc
    * [chat.deepseek.com](https://chat.deepseek.com)
    * [gemini.google.com](https://gemini.google.com)
    * [aistudio.google.com](https://aistudio.google.com)
-2. Click the floating button at the top of the tab until it turns **Green**.
+2. Verify the floating Obsidian Signal pill at the top of the tab turns **Emerald (`Bridge · Live`)** — or click it once to switch between **Dedicated** and **Standby** (or reclaim a replaced tab).
 3. Prompt your IDE agent naturally — it delegates the heavy lifting autonomously!
 
 | Indicator | Status | Action |
 |:---:|---|---|
-| **White** | **Standby** | Click once to dedicate this tab as active Orchestrator. |
-| **Green** | **Connected** | Active & ready! Tab will handle requests. |
-| **Blue** | **Processing** | Files uploaded, generating thinking & code. |
-| **Yellow** | **Connecting** | IDE has not launched the MCP server yet or port is waiting. |
+| **Emerald** | **`Bridge · Live`** | Active & ready! Tab handles incoming requests (click to park in Standby). |
+| **Amber** | **`Bridge · Busy` / `Upload`** | Uploading attachments or streaming response (clicks disabled while running). |
+| **Cobalt** | **`Bridge · Connecting`** | Waiting for the local MCP server handshake on WebSocket port `4545`. |
+| **Slate** | **`Bridge · Standby`** | Tab paused intentionally; click the pill once to claim and connect. |
+| **Rose** | **`Bridge · Replaced` / `Offline`** | Another tab claimed the bridge or server is unreachable; click to reconnect. |
 
 > [!TIP]
 > **Need a clean slate?** Open a **New Chat** in the web tab. WebAI Bridge automatically detects new conversations and sends fresh context bundles!

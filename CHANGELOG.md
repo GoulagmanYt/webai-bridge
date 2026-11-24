@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Obsidian Signal UI & restored Shadow-DOM Floating Pill**: Redesigned `extension/popup.html` and `extension/popup.js` with an Obsidian Signal dark palette, tabular telemetry grid (`Provider`, `Tab Mode`, `Upload State`, `Active Job`), show/hide `#toggleTokenBtn`, Enter-to-save, CSS semantic status badges, `:focus-visible`, and `prefers-reduced-motion`; added `FloatingBridgePill` (isolated Shadow DOM, viewport-clamped drag persistence in `webai_bridge_pill_pos`, one-click Live ↔ Standby / Reclaim toggle via `webai_bridge_dedicated`) in `extension/content.js` backed by `BridgeContentRuntime.setDedicated()` / `disconnect()` / `onStateChange()` in `extension/content-core.js`, plus Milestone 4.10 tests and doctor checks.
 - **Orphan-process watchdog (`startParentWatchdog`)**: Periodically verifies `process.ppid` (opt-out via `BRIDGE_NO_WATCHDOG=1`) so orphaned bridge instances exit cleanly if the IDE terminates without closing `stdin`.
 - **Resilient `EADDRINUSE` bind retry loop**: Retries WebSocket binding up to 10 attempts (`BIND_MAX_ATTEMPTS = 10`, `BIND_RETRY_DELAY_MS = 1000`) and exits non-zero cleanly if the port remains permanently occupied.
 - **Opt-in file logging (`BRIDGE_LOG_FILE`)**: Appends timestamped PID-tagged diagnostics when configured (`*.log` ignored in `.gitignore`).

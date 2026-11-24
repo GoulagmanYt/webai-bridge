@@ -649,3 +649,213 @@ test('Milestone 4.9 - collectTabDiagnostics resolves parent composer container i
     else globalThis.window = savedWindow;
   }
 });
+
+test('Milestone 4.10 - Obsidian Signal popup states, FloatingBridgePill lifecycle & Standby/Dedicated toggle', async () => {
+  // 1. Popup state resolver across all semantic states
+  assert.deepEqual(PopupMod.resolveConnectionState(null), { state: 'disconnected', badgeText: 'No AI Tab', tabMode: 'Offline' });
+  assert.deepEqual(PopupMod.resolveConnectionState({ ok: false }), { state: 'disconnected', badgeText: 'No AI Tab', tabMode: 'Offline' });
+  assert.deepEqual(PopupMod.resolveConnectionState({ ok: true, busy: true }), { state: 'busy', badgeText: 'Busy', tabMode: 'Busy' });
+  assert.deepEqual(PopupMod.resolveConnectionState({ ok: true, wasReplaced: true }), { state: 'replaced', badgeText: 'Replaced', tabMode: 'Replaced' });
+  assert.deepEqual(PopupMod.resolveConnectionState({ ok: true, dedicated: false }), { state: 'standby', badgeText: 'Standby', tabMode: 'Standby' });
+  assert.deepEqual(PopupMod.resolveConnectionState({ ok: true, connected: true }), { state: 'connected', badgeText: 'Connected', tabMode: 'Dedicated' });
+  assert.deepEqual(PopupMod.resolveConnectionState({ ok: true, connecting: true }), { state: 'connecting', badgeText: 'Connecting...', tabMode: 'Connecting' });
+  assert.deepEqual(PopupMod.resolveConnectionState({ ok: true, lastError: 'ECONNREFUSED' }), { state: 'error', badgeText: 'Error', tabMode: 'Offline' });
+  assert.deepEqual(PopupMod.resolveConnectionState({ ok: true }), { state: 'disconnected', badgeText: 'Disconnected', tabMode: 'Offline' });
+
+  // 2. Pill state mapping & viewport clamping
+  assert.equal(ContentFacade.resolvePillState({ connected: true }).label, 'Bridge \u00b7 Live');
+  assert.equal(ContentFacade.resolvePillState({ busy: true, uploadState: 'IDLE' }).label, 'Bridge \u00b7 Busy');
+  assert.equal(ContentFacade.resolvePillState({ busy: true, uploadState: 'INJECTING' }).label, 'Bridge \u00b7 Upload');
+  assert.equal(ContentFacade.resolvePillState({ wasReplaced: true }).state, 'replaced');
+  assert.equal(ContentFacade.resolvePillState({ dedicated: false }).label, 'Bridge \u00b7 Standby');
+  assert.equal(ContentFacade.resolvePillState({ connecting: true }).state, 'connecting');
+  assert.equal(ContentFacade.resolvePillState({ lastError: 'fail' }).state, 'error');
+
+  assert.deepEqual(ContentFacade.clampPillPosition(-50, -10, 156, 32, 1280, 800), { x: 10, y: 10 });
+  assert.deepEqual(ContentFacade.clampPillPosition(5000, 4000, 156, 32, 1280, 800), { x: 1114, y: 758 });
+  assert.deepEqual(ContentFacade.clampPillPosition(Number.NaN, 100, 156, 32, 1280, 800), { x: 10, y: 100 });
+
+  // 3. BridgeContentRuntime setDedicated / disconnect / onStateChange lifecycle
+  const rt = new CoreMod.BridgeContentRuntime({ provider: ProvidersMod.PROVIDERS.gemini });
+  const transitions = [];
+  const unsubscribe = rt.onStateChange((s) => transitions.push(s));
+
+  let closeArgs = null;
+  rt.ws = { readyState: 1, close(code, reason) { closeArgs = { code, reason }; }, send() {} };
+  await rt.setDedicated(false);
+  assert.equal(rt.dedicated, false);
+  assert.equal(rt.ws, null);
+  assert.deepEqual(closeArgs, { code: 1000, reason: 'standby' });
+  rt.scheduleReconnect();
+  assert.equal(rt.reconnectTimer, null, 'Standby tab must not schedule reconnect loop');
+  assert.equal(transitions[transitions.length - 1].dedicated, false);
+
+  let connectInvoked = 0;
+  rt.connect = async () => { connectInvoked++; };
+  rt.wasReplaced = true;
+  await rt.setDedicated(true);
+  assert.equal(rt.dedicated, true);
+  assert.equal(rt.wasReplaced, false);
+  assert.equal(connectInvoked, 1);
+
+  unsubscribe();
+  const countBefore = transitions.length;
+  rt.disconnect('cleanup');
+  assert.equal(transitions.length, countBefore, 'Unsubscribed listener must not receive events');
+
+  // 4. FloatingBridgePill Shadow-DOM mount, update, click toggle, and destroy cleanup
+  const savedDocument = globalThis.document;
+  const savedWindow = globalThis.window;
+  const savedLocalStorage = globalThis.localStorage;
+
+  try {
+    function makeElement(tag) {
+      const listeners = new Map();
+      const attrs = new Map();
+      const children = [];
+      return {
+        tagName: String(tag).toUpperCase(),
+        style: {},
+        children,
+        firstChild: null,
+        isConnected: false,
+        shadowRoot: null,
+        _textContent: '',
+        get textContent() {
+          return this._textContent;
+        },
+        set textContent(v) {
+          this._textContent = String(v);
+        },
+        setAttribute(k, v) {
+          attrs.set(k, String(v));
+          if (k === 'id') this.id = String(v);
+        },
+        getAttribute(k) {
+          return attrs.has(k) ? attrs.get(k) : null;
+        },
+        appendChild(child) {
+          children.push(child);
+          child.parentElement = this;
+          child.isConnected = true;
+          if (!this.firstChild) this.firstChild = child;
+          return child;
+        },
+        remove() {
+          this.isConnected = false;
+          if (this.parentElement) {
+            const idx = this.parentElement.children.indexOf(this);
+            if (idx !== -1) this.parentElement.children.splice(idx, 1);
+          }
+        },
+        contains(node) {
+          if (node === this) return true;
+          return children.some((c) => typeof c.contains === 'function' && c.contains(node));
+        },
+        addEventListener(evt, fn) {
+          if (!listeners.has(evt)) listeners.set(evt, []);
+          listeners.get(evt).push(fn);
+        },
+        dispatchEvent(evt) {
+          const list = listeners.get(evt.type) || [];
+          for (const fn of list) fn(evt);
+        },
+        querySelector(sel) {
+          if (sel.startsWith('.')) {
+            const cls = sel.slice(1);
+            if (this.className && String(this.className).split(/\s+/).includes(cls)) return this;
+          }
+          for (const child of children) {
+            if (typeof child.querySelector === 'function') {
+              const hit = child.querySelector(sel);
+              if (hit) return hit;
+            }
+          }
+          return null;
+        },
+        attachShadow() {
+          const sr = makeElement('SHADOW-ROOT');
+          this.shadowRoot = sr;
+          return sr;
+        }
+      };
+    }
+
+    const docEl = makeElement('HTML');
+    const winListeners = new Map();
+    const store = new Map([[ 'webai_bridge_pill_pos', JSON.stringify({ x: 9999, y: 24 }) ]]);
+
+    globalThis.localStorage = {
+      getItem: (k) => (store.has(k) ? store.get(k) : null),
+      setItem: (k, v) => store.set(k, String(v))
+    };
+    const fakeWin = {
+      innerWidth: 1280,
+      innerHeight: 800,
+      addEventListener(evt, fn) {
+        if (!winListeners.has(evt)) winListeners.set(evt, new Set());
+        winListeners.get(evt).add(fn);
+      },
+      removeEventListener(evt, fn) {
+        if (winListeners.has(evt)) winListeners.get(evt).delete(fn);
+      }
+    };
+    fakeWin.top = fakeWin;
+    fakeWin.self = fakeWin;
+    globalThis.window = fakeWin;
+    globalThis.document = {
+      documentElement: docEl,
+      body: null,
+      getElementById: (id) => docEl.children.find((c) => c.id === id) || null,
+      createElement: (tag) => makeElement(tag),
+      createElementNS: (_ns, tag) => makeElement(tag)
+    };
+
+    const pillRuntime = {
+      port: 4545,
+      authToken: '',
+      provider: ProvidersMod.PROVIDERS.gemini,
+      dedicatedCalls: [],
+      getStatusSummary: () => ({ ok: true, connected: true, dedicated: true, port: 4545, uploadState: 'IDLE' }),
+      setDedicated: async (flag) => {
+        pillRuntime.dedicatedCalls.push(flag);
+      }
+    };
+
+    const pill = new ContentFacade.FloatingBridgePill(pillRuntime, { providerName: 'Google Gemini' });
+    const host = pill.mount();
+    assert.ok(host, 'FloatingBridgePill should mount host element in top-level frame');
+    assert.equal(host.getAttribute('data-webai-bridge-ui'), 'true');
+    assert.equal(host.style.left, '1114px', 'Stored x should clamp cleanly to viewport bounds');
+    assert.equal(pill.buttonEl.getAttribute('data-state'), 'connected');
+    assert.equal(pill.labelEl.textContent, 'Bridge \u00b7 Live');
+
+    // Click when connected -> toggles Standby (false)
+    pill.buttonEl.dispatchEvent({ type: 'click' });
+    assert.deepEqual(pillRuntime.dedicatedCalls, [false]);
+
+    // Click when busy -> must NOT interrupt active job
+    pill.update({ ok: true, busy: true, uploadState: 'INJECTING', port: 4545 });
+    assert.equal(pill.buttonEl.getAttribute('data-state'), 'busy');
+    assert.equal(pill.labelEl.textContent, 'Bridge \u00b7 Upload');
+    pill.buttonEl.dispatchEvent({ type: 'click' });
+    assert.deepEqual(pillRuntime.dedicatedCalls, [false]);
+
+    // Click when standby -> dedicates tab (true)
+    pill.update({ ok: true, connected: false, dedicated: false, port: 4545 });
+    assert.equal(pill.buttonEl.getAttribute('data-state'), 'standby');
+    pill.buttonEl.dispatchEvent({ type: 'click' });
+    assert.deepEqual(pillRuntime.dedicatedCalls, [false, true]);
+
+    pill.destroy();
+    assert.equal(host.isConnected, false);
+    assert.equal((winListeners.get('pointermove') || new Set()).size, 0, 'destroy() must remove window pointermove listener');
+  } finally {
+    if (savedDocument === undefined) delete globalThis.document;
+    else globalThis.document = savedDocument;
+    if (savedWindow === undefined) delete globalThis.window;
+    else globalThis.window = savedWindow;
+    if (savedLocalStorage === undefined) delete globalThis.localStorage;
+    else globalThis.localStorage = savedLocalStorage;
+  }
+});

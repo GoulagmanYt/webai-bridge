@@ -802,7 +802,10 @@
   class BridgeContentRuntime {
     constructor(options = {}) {
       this.provider = options.provider || Providers.detectProvider();
-      this.uploadMachine = new Upload.UploadStateMachine();
+      this._stateListeners = new Set();
+      this.uploadMachine = new Upload.UploadStateMachine({
+        onTransition: () => this._emitStateChange()
+      });
       this.ws = null;
       this.port = options.port || DEFAULT_BRIDGE_PORT;
       this.authToken = options.authToken || '';
@@ -810,12 +813,135 @@
       this.isBusy = false;
       this.activeRequestId = null;
       this.wasReplaced = false;
+      this.connecting = false;
+      this.lastError = null;
+      this.dedicated = this._resolveInitialDedicated(options.dedicated);
       this.reconnectTimer = null;
       this.reconnectAttempts = 0;
       this.heartbeatTimer = null;
       this.debugMode = Boolean(options.debugMode);
       this.debugLogs = [];
       this.maxLogs = 500;
+    }
+
+    _resolveInitialDedicated(explicitDedicated) {
+      if (explicitDedicated !== undefined) return Boolean(explicitDedicated);
+      try {
+        if (typeof sessionStorage !== 'undefined' && sessionStorage && typeof sessionStorage.getItem === 'function') {
+          if (sessionStorage.getItem('webai_bridge_dedicated') === '0') {
+            return false;
+          }
+        }
+      } catch (_) {}
+      return true;
+    }
+
+    /**
+     * Subscribes to runtime state changes (connection, standby, busy, upload state, errors).
+     * @param {Function} listener
+     * @returns {Function} Unsubscribe callback
+     */
+    onStateChange(listener) {
+      if (typeof listener !== 'function') return () => {};
+      this._stateListeners.add(listener);
+      return () => {
+        this._stateListeners.delete(listener);
+      };
+    }
+
+    _emitStateChange() {
+      if (!this._stateListeners || this._stateListeners.size === 0) return;
+      const summary = this.getStatusSummary();
+      for (const listener of Array.from(this._stateListeners)) {
+        try {
+          listener(summary);
+        } catch (_) {
+          // Listener errors must never disrupt runtime operations
+        }
+      }
+    }
+
+    /**
+     * Returns a unified status snapshot shared by the Popup UI and in-page Floating Pill.
+     * @returns {object}
+     */
+    getStatusSummary() {
+      return {
+        ok: true,
+        connected: Boolean(this.ws && this.ws.readyState === 1),
+        connecting: Boolean(this.connecting),
+        dedicated: Boolean(this.dedicated),
+        wasReplaced: Boolean(this.wasReplaced),
+        busy: Boolean(this.isBusy),
+        isBusy: Boolean(this.isBusy),
+        provider: this.provider ? this.provider.id : 'unknown',
+        providerName: this.provider ? this.provider.name : 'Unknown',
+        uploadState: this.uploadMachine ? this.uploadMachine.state : 'IDLE',
+        activeRequestId: this.activeRequestId,
+        activeJobId: this.activeRequestId,
+        lastError: this.lastError,
+        debugMode: Boolean(this.debugMode),
+        logCount: (this.debugLogs || []).length,
+        port: this.port
+      };
+    }
+
+    /**
+     * Cleanly closes the active WebSocket connection and stops reconnect/heartbeat timers.
+     * @param {string} [reason='standby']
+     */
+    disconnect(reason = 'standby') {
+      this.cancelReconnect();
+      this.stopHeartbeat();
+      this.connecting = false;
+      this.sessionSecret = null;
+
+      if (this.ws) {
+        const oldWs = this.ws;
+        this.ws = null;
+        try {
+          oldWs.onopen = null;
+          oldWs.onclose = null;
+          oldWs.onerror = null;
+          oldWs.onmessage = null;
+          if (typeof oldWs.close === 'function') {
+            oldWs.close(1000, reason);
+          }
+        } catch (_) {
+          // Ignore socket close errors
+        }
+      }
+      this._emitStateChange();
+    }
+
+    /**
+     * Toggles whether this tab is dedicated to the bridge or parked in Standby mode.
+     * Persists preference in sessionStorage under 'webai_bridge_dedicated'.
+     * @param {boolean} dedicated
+     * @returns {Promise<void>}
+     */
+    async setDedicated(dedicated) {
+      const next = Boolean(dedicated);
+      this.dedicated = next;
+      try {
+        if (typeof sessionStorage !== 'undefined' && sessionStorage && typeof sessionStorage.setItem === 'function') {
+          sessionStorage.setItem('webai_bridge_dedicated', next ? '1' : '0');
+        }
+      } catch (_) {}
+
+      if (!next) {
+        this.wasReplaced = false;
+        this.log('SYSTEM', 'info', 'Tab switched to Standby mode');
+        this.disconnect('standby');
+        return;
+      }
+
+      this.wasReplaced = false;
+      this.lastError = null;
+      this.reconnectAttempts = 0;
+      this.log('SYSTEM', 'info', 'Tab dedicated to WebAI Bridge; connecting...');
+      this._emitStateChange();
+      await this.connect();
     }
 
     /**
@@ -910,6 +1036,7 @@
      */
     async connect() {
       if (!this.provider) return;
+      if (!this.dedicated) return;
       if (typeof WebSocket === 'undefined') return;
 
       const config = await loadBridgeConfig();
@@ -920,24 +1047,33 @@
       }
 
       if (!config.autoConnect) return;
+      if (!this.dedicated) return;
 
       if (this.ws && (this.ws.readyState === 0 || this.ws.readyState === 1)) {
         return;
       }
 
       this.wasReplaced = false;
+      this.connecting = true;
+      this._emitStateChange();
+
       const wsUrl = buildWebSocketUrl(this.port, this.authToken);
       let socket;
       try {
         socket = new WebSocket(wsUrl);
         this.ws = socket;
-      } catch (_) {
+      } catch (err) {
+        this.connecting = false;
+        this.lastError = err && err.message ? err.message : 'WebSocket initialization failed';
+        this._emitStateChange();
         this.scheduleReconnect();
         return;
       }
 
       socket.onopen = () => {
         if (this.ws !== socket) return;
+        this.connecting = false;
+        this.lastError = null;
         this.reconnectAttempts = 0;
         this.sendWs({
           type: 'AUTH_HELLO',
@@ -948,6 +1084,7 @@
           authToken: this.authToken
         });
         this.startHeartbeat();
+        this._emitStateChange();
       };
 
       socket.onmessage = (event) => {
@@ -965,15 +1102,18 @@
         if (this.ws === socket) {
           this.ws = null;
         }
+        this.connecting = false;
         this.stopHeartbeat();
         this.sessionSecret = null;
-        if (!this.wasReplaced) {
+        this._emitStateChange();
+        if (this.dedicated && !this.wasReplaced) {
           this.scheduleReconnect();
         }
       };
 
       socket.onerror = () => {
-        // Error is followed by onclose which schedules reconnect
+        this.lastError = `Cannot reach bridge on :${this.port}`;
+        this._emitStateChange();
       };
     }
 
@@ -1003,7 +1143,7 @@
     }
 
     scheduleReconnect() {
-      if (this.wasReplaced || this.reconnectTimer) return;
+      if (!this.dedicated || this.wasReplaced || this.reconnectTimer) return;
       const backoff = Math.min(1000 * Math.pow(1.5, this.reconnectAttempts), 10000);
       this.reconnectAttempts++;
       this.reconnectTimer = setTimeout(() => {
@@ -1023,24 +1163,17 @@
       if (typeof newToken === 'string') this.authToken = newToken.trim();
       if (newDebugMode !== undefined) this.setDebugMode(newDebugMode);
 
-      this.wasReplaced = false;
-      this.cancelReconnect();
-      this.reconnectAttempts = 0;
-      this.stopHeartbeat();
-      this.sessionSecret = null;
-
-      if (this.ws) {
-        const oldWs = this.ws;
-        this.ws = null;
-        try {
-          oldWs.onclose = null;
-          oldWs.onerror = null;
-          oldWs.onmessage = null;
-          oldWs.close();
-        } catch (_) {
-          // Ignore
+      this.dedicated = true;
+      try {
+        if (typeof sessionStorage !== 'undefined' && sessionStorage && typeof sessionStorage.setItem === 'function') {
+          sessionStorage.setItem('webai_bridge_dedicated', '1');
         }
-      }
+      } catch (_) {}
+
+      this.wasReplaced = false;
+      this.lastError = null;
+      this.reconnectAttempts = 0;
+      this.disconnect('reconfigure');
       await this.connect();
     }
 
@@ -1053,10 +1186,12 @@
 
       if (msg.type === 'replaced') {
         this.wasReplaced = true;
+        this.connecting = false;
         this.cancelReconnect();
         this.stopHeartbeat();
         this.sessionSecret = null;
         this.log('SYSTEM', 'warn', 'Connection replaced by another browser tab; auto-reconnect suspended.');
+        this._emitStateChange();
         return;
       }
 
@@ -1160,6 +1295,8 @@
 
       this.isBusy = true;
       this.activeRequestId = requestId;
+      this.lastError = null;
+      this._emitStateChange();
 
       try {
         const inputEl = Providers.findInputElement(this.provider);
@@ -1270,6 +1407,7 @@
           chunksEmitted: result.chunksEmitted
         });
       } catch (err) {
+        this.lastError = err.message || String(err);
         this.log('ERROR', 'error', `Task execution failed: ${err.message}`, { code: err.code });
         this.sendWs({
           id: requestId,
@@ -1284,6 +1422,7 @@
         this.uploadMachine.reset();
         this.isBusy = false;
         this.activeRequestId = null;
+        this._emitStateChange();
       }
     }
   }
