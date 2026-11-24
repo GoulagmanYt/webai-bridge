@@ -135,12 +135,12 @@ async function runLiveTest() {
         const tools = listResp.result.tools;
         const toolNames = tools.map(t => t.name);
         console.log("  -> Registered tools:", toolNames);
-        assert.ok(toolNames.includes("consult_orchestrator"), "consult_orchestrator must be present");
-        assert.ok(toolNames.includes("orchestrator_status"), "orchestrator_status must be present");
-        assert.ok(toolNames.includes("consult_gemini_web_pro"), "consult_gemini_web_pro must be present");
-        assert.ok(toolNames.includes("consult_web_architect"), "consult_web_architect must be present");
-        assert.ok(toolNames.includes("get_bridge_status"), "get_bridge_status must be present");
-        console.log("  -> SUCCESS: All canonical and legacy tools properly declared.\n");
+        assert.deepEqual(
+            toolNames,
+            ["consult_orchestrator", "orchestrator_status"],
+            "Only canonical tools should be listed by default"
+        );
+        console.log("  -> SUCCESS: Canonical tools properly declared (legacy aliases hidden by default).\n");
 
         // Call orchestrator_status
         console.log("[Test 6] Calling 'orchestrator_status' tool...");
@@ -166,7 +166,25 @@ async function runLiveTest() {
             }
         });
         const replyText = consultCall.result.content[0].text;
+        assert.match(replyText.split("\n")[0], /loop=continue/, "Reply envelope must include loop=continue");
+        assert.match(replyText.split("\n")[0], /in_tok=\d+/, "Reply envelope must include input token telemetry");
         assert.ok(replyText.includes("export const liveStatus = 'PERFECT'"), "Must contain generated code");
+
+        // Call deprecated legacy alias at runtime to verify backward compatibility
+        console.log("[Test 7b] Verifying legacy alias 'consult_gemini_web_pro' runtime compatibility...");
+        const legacyCall = await sendJsonRpc("tools/call", {
+            name: "consult_gemini_web_pro",
+            arguments: {
+                projectRoot: process.cwd(),
+                conversation_history_and_context: "Live test follow-up delta",
+                task: "Verify legacy tool alias compatibility",
+                filePaths: []
+            }
+        });
+        const legacyText = legacyCall.result.content[0].text;
+        assert.match(legacyText.split("\n")[0], /loop=continue/, "Legacy alias reply must include loop=continue");
+        assert.match(legacyText.split("\n")[0], /out_tok=\d+/, "Legacy alias reply must include out_tok telemetry");
+        assert.ok(legacyText.includes("export const liveStatus = 'PERFECT'"), "Legacy alias must return generated code");
         console.log("  -> SUCCESS: Response received and forwarded through bridge:");
         console.log("--------------------------------------------------");
         console.log(replyText);
