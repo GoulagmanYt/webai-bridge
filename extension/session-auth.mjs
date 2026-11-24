@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
-export const DEFAULT_WS_PORT = 8765;
+export const DEFAULT_WS_PORT = 4545;
 export const MIN_VALID_PORT = 1024;
 export const MAX_VALID_PORT = 65535;
 
@@ -25,7 +25,7 @@ export const ALLOWED_WS_ORIGINS = [
 
 /**
  * Parses and validates a port number from CLI args, environment variables, or fallback.
- * Priority: explicit override -> CLI `--port` -> `WEBAI_BRIDGE_PORT` -> `ANTIGRAVITY_BRIDGE_PORT` -> `BRIDGE_PORT` -> 8765.
+ * Priority: explicit override -> CLI `--port` -> `WEBAI_BRIDGE_PORT` -> `ANTIGRAVITY_BRIDGE_PORT` -> `BRIDGE_PORT` -> 4545.
  * @param {object} [options]
  * @param {number|string} [options.port]
  * @param {string[]} [options.argv]
@@ -134,7 +134,7 @@ export class SessionAuthManager {
   }
 
   /**
-   * Writes the current session metadata (port, token, pid, timestamp) to disk with 0600 permissions.
+   * Atomically writes the current session metadata (port, token, pid, timestamp) to disk with 0600 permissions.
    * @returns {string} Path to the written session file
    */
   persistSessionFile() {
@@ -148,19 +148,48 @@ export class SessionAuthManager {
       pid: process.pid,
       startedAt: this.startedAt
     };
-    fs.writeFileSync(this.sessionFilePath, JSON.stringify(payload, null, 2), {
-      encoding: 'utf8',
-      mode: 0o600
-    });
+    const serialized = JSON.stringify(payload, null, 2);
+    const tmpPath = `${this.sessionFilePath}.tmp-${process.pid}-${crypto.randomBytes(4).toString('hex')}`;
+    try {
+      fs.writeFileSync(tmpPath, serialized, {
+        encoding: 'utf8',
+        mode: 0o600
+      });
+      fs.renameSync(tmpPath, this.sessionFilePath);
+    } catch (_) {
+      try {
+        if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
+      } catch (__) {}
+      fs.writeFileSync(this.sessionFilePath, serialized, {
+        encoding: 'utf8',
+        mode: 0o600
+      });
+    }
     return this.sessionFilePath;
   }
 
   /**
-   * Removes the session file on graceful shutdown.
+   * Removes the session file on graceful shutdown only if it belongs to this session.
+   * Prevents a failed secondary bridge instance from deleting an active instance's session file.
    */
   cleanupSessionFile() {
     try {
-      if (fs.existsSync(this.sessionFilePath)) {
+      if (!fs.existsSync(this.sessionFilePath)) return;
+      let shouldUnlink = false;
+      try {
+        const raw = fs.readFileSync(this.sessionFilePath, 'utf8');
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          if (parsed.sessionId) {
+            shouldUnlink = parsed.sessionId === this.sessionId;
+          } else {
+            shouldUnlink = parsed.pid === process.pid;
+          }
+        }
+      } catch (_) {
+        shouldUnlink = false;
+      }
+      if (shouldUnlink) {
         fs.unlinkSync(this.sessionFilePath);
       }
     } catch (_) {

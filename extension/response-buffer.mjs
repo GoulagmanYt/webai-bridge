@@ -42,7 +42,9 @@ export function computePromptFingerprint({ prompt = '', provider = '', files = [
   if (Array.isArray(files)) {
     for (const f of files) {
       if (f && typeof f === 'object') {
-        hash.update(`${f.name || f.path || ''}:${(f.content || '').length};`);
+        hash.update(`${f.name || f.path || ''}:${f.encoding || 'utf8'}:`);
+        hash.update(typeof f.content === 'string' ? f.content : String(f.content ?? ''));
+        hash.update('\x00');
       }
     }
   }
@@ -190,6 +192,10 @@ export class ResponseBufferManager {
       }).job;
     }
 
+    if (job.status === JOB_STATUS.COMPLETED) {
+      return job;
+    }
+
     const now = Date.now();
     job.status = JOB_STATUS.COMPLETED;
     job.updatedAt = now;
@@ -197,6 +203,7 @@ export class ResponseBufferManager {
     job.finalText = typeof finalText === 'string' ? finalText : job.partialText;
     job.partialText = job.finalText;
     job.isThinking = false;
+    job.error = null;
     if (typeof meta.chunksEmitted === 'number') {
       job.chunksEmitted = meta.chunksEmitted;
     }
@@ -215,6 +222,9 @@ export class ResponseBufferManager {
   failJob(jobId, error) {
     const job = this.jobs.get(jobId);
     if (!job) return null;
+    if (job.status === JOB_STATUS.COMPLETED || job.status === JOB_STATUS.FAILED) {
+      return job;
+    }
 
     job.status = JOB_STATUS.FAILED;
     job.updatedAt = Date.now();
@@ -431,7 +441,9 @@ export class ResponseBufferManager {
         age > this.jobTtlMs
       ) {
         this.jobs.delete(id);
-        this.fingerprintIndex.delete(job.fingerprint);
+        if (this.fingerprintIndex.get(job.fingerprint) === id) {
+          this.fingerprintIndex.delete(job.fingerprint);
+        }
         if (this.persistToDisk) {
           try {
             fs.unlinkSync(this._jobFilePath(id));
