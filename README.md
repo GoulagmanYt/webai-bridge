@@ -301,23 +301,31 @@ The protocol definition lives in [`extension/protocol.mjs`](extension/protocol.m
 
 | Tool | Parameters | Description |
 |---|---|---|
-| `consult_orchestrator` | `projectRoot` *(required)*<br/>`conversation_history_and_context` *(required)*<br/>`task` *(required)*<br/>`filePaths` *(array of paths)*<br/>`response_type` (`code_changes` \| `analysis`) | Delegates a non-trivial architectural, refactoring, or debugging task to the Web AI Orchestrator. Attaches project files natively, returns structured replies. |
-| `orchestrator_status` | *(none)* | Checks connectivity, reports active provider and model readiness, and returns recovery instructions if disconnected. |
+| `consult_orchestrator` | `projectRoot` *(required)*<br/>`conversation_history_and_context` *(required)*<br/>`task` *(required)*<br/>`filePaths` *(paths or `path:start-end` slices)*<br/>`response_type` (`code_changes` \| `analysis`)<br/>*Optional:* `output_mode` (`auto` \| `patch` \| `full` \| `analysis`), `context_mode` (`auto` \| `minimal` \| `full` \| `none`), `file_mode` (`auto` \| `diff` \| `full`), `target_files`, `max_context_chars`, `jobId`, `softTimeoutMs` | Delegates a non-trivial architectural, refactoring, or debugging task to the Web AI Orchestrator in a closed autonomous loop. Supports incremental diffs, line-range slices, hybrid `PATCH:`/`FILE:` output, and `jobId` stream resumption. |
+| `orchestrator_status` | *Optional:* `inspect`, `includeLogs`, `selector`, `limitLogs`, `action`, `jobId`, `softTimeoutMs` | Checks connectivity, active provider, cumulative `sessionMetrics` (token/latency/diff counters), buffered job state, or runs live DOM & debug-log diagnostics (`inspect=true`). |
 
 ### Structured Reply Format
-Successful replies begin with an envelope header followed by the Orchestrator's structured output:
+Successful replies begin with a telemetry-enriched envelope header, optional refusal/dry-run/continuation lines, and the Orchestrator's structured output:
 
 ````text
-[orchestrator protocol=1 provider=Claude status=ok response_type=code_changes files_sent=3 files_unchanged=0 files_refused=1]
+[orchestrator protocol=1 provider=Claude status=ok response_type=code_changes mode=auto files_sent=1 files_diff=1 files_unchanged=2 files_refused=1 loop=continue in_tok=640 out_tok=210 saved_tok=1850 ms=11200]
 [refused] .env (sensitive file (credentials, keys or VCS internals))
+[patch_check ok=1 failed=0]
+[loop=continue] Apply changes or run requested checks and immediately call consult_orchestrator with the delta; do not yield to the human user.
 
-FILE: /path/to/project/src/auth.ts
+PATCH: /path/to/project/src/auth.ts
+```patch
+// Exact SEARCH/REPLACE hunks using <<<<<<< SEARCH, =======, and >>>>>>> REPLACE delimiters
+```
+
+FILE: /path/to/project/src/new-helper.ts
 ```ts
-// Full rewritten code
+// Complete file for brand-new or small (<150 lines) files
 ```
 ````
 
-The IDE Executor strictly parses `FILE: <path>` blocks, applies modifications only inside `projectRoot`, and runs test suites to verify.
+- **Hybrid Output Contract**: Existing files (`>=150` lines) use `PATCH: <absolute path>` with `<<<<<<< SEARCH` / `=======` / `>>>>>>> REPLACE` hunks wrapped inside a fenced `patch` block; brand-new, small (`<150` lines), or heavily rewritten files use `FILE: <absolute path>`; file tree operations use `DELETE: <absolute path>` and `RENAME: <old_abs_path> -> <new_abs_path>`.
+- **Bridge-Side Dry-Run & Closed Loop**: `bridge.mjs` non-destructively validates `PATCH:`, `DELETE:`, and `RENAME:` directives against disk (`[patch_check ok=... failed=...]`) and sets `loop=continue|complete` mechanically from standalone `TASK_COMPLETE` signals. The Executor inspects replies for safety, applies changes inside `projectRoot`, runs project tests, and loops while `loop=continue`.
 
 ### Protocol Error Handling
 
@@ -335,12 +343,19 @@ The IDE Executor strictly parses `FILE: <path>` blocks, applies modifications on
 
 ## Configuration
 
+Port priority: CLI `--port <number>` (or `--port=<number>`) -> `WEBAI_BRIDGE_PORT` -> `ANTIGRAVITY_BRIDGE_PORT` -> `BRIDGE_PORT` -> `4545`.
+
 | Environment Variable | Default | Purpose |
 |---|:---:|---|
-| `BRIDGE_PORT` | `4545` | Port for the local WebSocket bridge. |
+| `WEBAI_BRIDGE_PORT` / `BRIDGE_PORT` | `4545` | Port for the local WebSocket bridge (`1024`–`65535`). `ANTIGRAVITY_BRIDGE_PORT` is also supported for legacy setups. |
+| `WEBAI_BRIDGE_TOKEN` | *auto-generated* | Fixed session token for WebSocket authentication (enables strict token enforcement; active session metadata is stored in `~/.webai-bridge/session.json` with `0600` permissions). |
+| `WEBAI_BRIDGE_STRICT_AUTH` | *none* | Set to `1` to require the per-session token from `~/.webai-bridge/session.json` on every WebSocket connection. |
 | `BRIDGE_EXTRA_ROOTS` | *none* | Additional allowed directories for file uploads (separated by `;` on Windows, `:` elsewhere). |
 | `BRIDGE_INSTALL_RULE` | *none* | Set to `1` to automatically install the agent protocol into `~/.gemini/GEMINI.md`. |
-| `BRIDGE_HIDE_LEGACY_TOOLS`| *none* | Set to `1` to hide deprecated alias tools. |
+| `BRIDGE_SHOW_LEGACY_TOOLS` | *none* | Set to `1` to include deprecated alias tools in `tools/list` (hidden by default to save IDE agent tokens; aliases still work at runtime). `BRIDGE_HIDE_LEGACY_TOOLS=1` remains supported as an override. |
+| `BRIDGE_CONTEXT_EXCLUDE` | *none* | Comma- or semicolon-separated glob patterns excluded from Turn-1 auto-discovered context (in addition to optional project `.webaiignore`, lockfiles, and bridge self-rules/skills). |
+| `BRIDGE_LOG_FILE` | *none* | File path to append timestamped bridge diagnostic logs. |
+| `BRIDGE_NO_WATCHDOG` | *none* | Set to `1` to disable the parent-process orphan watchdog. |
 
 ---
 
@@ -351,15 +366,15 @@ The IDE Executor strictly parses `FILE: <path>` blocks, applies modifications on
 
 ### Can my `.env` files or secret keys leak?
 **Never.** The MCP server enforces a strict local file firewall:
-* Only files located inside `projectRoot` are accepted.
-* Any sensitive file matching `.env`, private keys, SSH credentials, tokens, or VCS internals (`.git/`) is **strictly refused and reported** under `[refused]`.
-* Individual files over 2 MB are rejected to prevent context pollution.
+- Only files located inside `projectRoot` are accepted.
+- Any sensitive file matching `.env`, private keys, SSH credentials, tokens, or VCS internals (`.git/`) is **strictly refused and reported** under `[refused]`.
+- Individual files over 2 MB are rejected to prevent context pollution.
 
 ### Can the Web AI execute destructive shell commands on my machine?
-**Impossible by design.** The Orchestrator's reply is treated as an untrusted proposal. The Executor agent only applies clean file blocks inside the project workspace and **never executes shell commands or installs packages** without your explicit consent.
+**Blocked by protocol and workspace boundaries.** The Orchestrator's reply is treated as an untrusted proposal. The Executor inspects proposed code and commands for safety before applying file changes inside `projectRoot` or running routine project build/test verification; destructive shell commands and unreviewed package installations are not executed without explicit consent.
 
 ### Does any data pass through third-party servers?
-**Zero.** Communication between your IDE and Chrome occurs 100% locally on `ws://localhost:4545`. No intermediary cloud service or telemetry tracker exists.
+**Zero.** Communication between your IDE and Chrome occurs 100% locally on `ws://127.0.0.1:4545` (validated by WebSocket `Origin` checks and optional per-session token auth). No intermediary cloud service or telemetry tracker exists.
 
 ---
 

@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Orphan-process watchdog (`startParentWatchdog`)**: Periodically verifies `process.ppid` (opt-out via `BRIDGE_NO_WATCHDOG=1`) so orphaned bridge instances exit cleanly if the IDE terminates without closing `stdin`.
+- **Resilient `EADDRINUSE` bind retry loop**: Retries WebSocket binding up to 10 attempts (`BIND_MAX_ATTEMPTS = 10`, `BIND_RETRY_DELAY_MS = 1000`) and exits non-zero cleanly if the port remains permanently occupied.
+- **Opt-in file logging (`BRIDGE_LOG_FILE`)**: Appends timestamped PID-tagged diagnostics when configured (`*.log` ignored in `.gitignore`).
+- **Large-prompt auto-attachment fallback**: Automatically converts oversized inline prompts (`> 20,000` chars) into a `.txt` attachment merged cleanly with any existing attachments in `content-core.js`.
+- **Binary-safe attachment encoding (`readAttachmentFile`)**: Detects binary files (PNG, PDF, archives, or NUL-byte buffers) and transmits them as `base64` with accurate MIME types without corrupting them with text headers.
+- **Startup stall detection (`DEFAULT_STARTUP_TIMEOUT_MS = 45000`)**: Fails fast with `GENERATION_NOT_STARTED` if generation never begins instead of holding `isBusy` for 10 minutes.
+- **Patch, incremental diff, slice & log compaction engine (`extension/patch-delta.mjs`)**: Added non-destructive bridge-side dry-run verification (`[patch_check ok=... failed=...]`) for `PATCH:` (`SEARCH/REPLACE`), `DELETE:`, and `RENAME:` directives; bounded LRU `sentFileSnapshots` unified diffs (`file_mode: "auto" | "diff" | "full"`); `path:start-end` line-range slicing in `filePaths`; follow-up `git diff --stat`; `.webaiignore` / `BRIDGE_CONTEXT_EXCLUDE` filtering; and verbose TAP/test log compaction.
+- **Mechanical closed-loop tracking & telemetry**: Added `hasTaskCompleteSignal()` (ignoring mentions inside fenced code blocks), `loop=continue|complete` + `[loop=continue]` directive and `in_tok`/`out_tok`/`saved_tok`/`ms` counters in `[orchestrator ...]` envelopes, plus cumulative `sessionMetrics` in `orchestrator_status`.
+- **Expanded test & doctor coverage**: Added `test/patch-delta.test.mjs`, canonical port `4545` and modular file checks to `scripts/doctor.mjs`, plus unit/E2E/live regression tests covering `orchestrator_status({ inspect: true })`, `orchestrator_status({ jobId })`, `get_last_response`, binary `.png` attachments, `session.json` ownership cleanup, Tier 1/Tier 2 uploads, large-prompt fallback, multi-tab replacement suppression, composer-container diagnostics, slices, incremental diffs, `[patch_check ...]`, and `loop=continue|complete`.
+
+### Changed
+- **Canonical default port unified to `4545`**: Aligned `extension/session-auth.mjs`, `extension/content-core.js`, `extension/popup.js`, `extension/popup.html`, `scripts/doctor.mjs`, and docs on port `4545` (still overridable via `--port`, `WEBAI_BRIDGE_PORT`, `ANTIGRAVITY_BRIDGE_PORT`, or `BRIDGE_PORT`).
+- **Token-optimized MCP schema, prompts & WS transport**: Hid deprecated legacy tool aliases from `tools/list` by default (opt-in via `BRIDGE_SHOW_LEGACY_TOOLS=1`; runtime resolution preserved), deduplicated `MCP_INSTRUCTIONS` / `CONSULT_DESCRIPTION` / `--install-rule` (`MANAGED_RULE_POINTER`) / `SKILL.md`, replaced verbose prompt banners with compact XML tags (`<role>`, `<context>`, `<files>`, `<task>`, `<output>`) and 1-line follow-up headers, introduced hybrid `PATCH:`/`FILE:` `output_mode` (`auto` | `patch` | `full` | `analysis`), raised the inline briefing upload threshold to `10,000` chars, priority-tiered `autoDiscoverProjectContext()` (`18,000`-char default cap, trimmed `package.json`, self-rule/skill/lockfile exclusions, `context_mode`), and eliminated 3x WebSocket `promptPayload` attachment duplication.
+- **Dynamic popup version display**: `extension/popup.html` and `extension/popup.js` now read the extension version dynamically from `chrome.runtime.getManifest().version` and guard all `chrome.tabs.sendMessage` callbacks against `chrome.runtime.lastError`.
+- **Protocol & documentation alignment**: Reconciled `CONSULT_DESCRIPTION`, `SECURITY.md`, and `README.md` to clarify autonomous project test/build verification after safety inspection, and tightened `npm run audit` to `--audit-level=moderate`.
+
+### Security
+- Updated `@modelcontextprotocol/sdk` (`^1.32.2`), `ws` (`^8.23.0`), and patched transitive `hono` / `@hono/node-server` advisories (`npm audit`: 0 vulnerabilities).
+- Switched `getGitContext()` in `extension/bridge.mjs` from `execSync` to `execFileSync`.
+- Persisted `~/.webai-bridge/session.json` atomically only after `wss` emits `listening`, with `sessionId`/PID ownership checks on cleanup so a failed secondary instance cannot overwrite or delete an active bridge's session file.
+
+### Fixed
+- Fixed missing `PROTOCOL_VERSION` import in `extension/bridge.mjs` that caused a `ReferenceError` on `orchestrator_status({ inspect: true })` and `orchestrator_status({ jobId })`.
+- Fixed `setupProcessLifecycle()` in `extension/bridge.mjs` to exit cleanly on `process.stdin` `end`/`close`, ensuring Windows `StdioClientTransport.close()` removes `session.json` cleanly before `SIGTERM`/`TerminateProcess`.
+- Fixed `isMainModule()` in `extension/bridge.mjs` using `fileURLToPath(import.meta.url)` and removed unused `os` import.
+- Fixed `get_last_response` fallthrough in `extension/bridge.mjs` so an empty cache/chat returns `BAD_REQUEST` instead of sending `"get_last_response"` as a live prompt.
+- Wrapped WebSocket `browserSocket.send()` calls in `try/catch` to avoid leaked listeners or stuck `PENDING` jobs.
+- Fixed `extension/content-providers.js` `extractCleanResponse()` so leading speaker-label stripping is anchored at the start of text and scoped strictly to ChatGPT, preventing mid-body truncation on code blocks across all providers; prioritized assistant-scoped ChatGPT `responseSelectors`; guarded `doc && doc.body` in Gemini's send resolver; removed all residual hashed DeepSeek CSS classes (`_27c9245`, `aaff8b8f`, `_77cefa5`).
+- Fixed `extension/content-upload.js` Tier 1 stale-input preservation on follow-up turns, Tier 2 missing `triggerBtn.click()` + lazy `<input type="file">` polling, Tier 3 `DragEvent('drop')` fallback, and baseline chip-delta / composer-scoped verification (eliminating false positives from prior turns and `document.body`).
+- Fixed `extension/content-core.js` multi-tab `{ type: "replaced" }` reconnect loops, parent composer resolution in `collectTabDiagnostics()`, and missing `busy`/`activeRequestId`/`uploadState` fields inside `check_session` payloads.
+- Hardened `extension/response-buffer.mjs` prompt fingerprinting to hash full file contents and prevented late events from mutating already-settled jobs.
+- Enforced fenced `patch` blocks around `PATCH:` `SEARCH/REPLACE` hunks in `buildOrchestratorFooter()` so Web AI markdown renderers never misparse `=======` delimiters as Setext headings.
+
 ## [2.4.0] - 2026-11-08
 
 ### Changed
@@ -67,8 +103,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed permanent promise hang/deadlock when browser tab closes or disconnects during tool execution.
 - Fixed selector and streaming detection issues on Claude (`[data-is-streaming="true"]`) and ChatGPT (`.result-streaming`).
 - Fixed npm audit vulnerabilities in transitive dependencies.
-
-## [2.1.0] - 2026-10-17
-
-- Initial release of Antigravity Universal AI Bridge with support for Gemini, Claude, ChatGPT, and DeepSeek.
-
