@@ -62,6 +62,7 @@
   /**
    * Structural fallback for DeepSeek and modern SPA chatboxes where action buttons
    * use unlabelled div[role="button"] elements with SVG icons instead of stable classes.
+   * Zero hashed CSS module classes are used.
    * @param {Element|null} inputEl
    * @param {'send'|'stop'|'upload'} roleType
    * @returns {Element|null}
@@ -72,7 +73,7 @@
     let composerRoot = inputEl
       ? (inputEl.closest('form') ||
          inputEl.closest('[role="group"]') ||
-         inputEl.closest('[class*="inputFullContainer"], [class*="inputWrapper"], [class*="belowInputWrapper"], .aaff8b8f, ._77cefa5'))
+         inputEl.closest('[class*="inputFullContainer"], [class*="inputWrapper"], [class*="belowInputWrapper"], [class*="composer"], [class*="chat-input"]'))
       : null;
     if (!composerRoot && inputEl) {
       let cur = inputEl.parentElement;
@@ -312,7 +313,7 @@
 
             if (composerRoot && !composerRoot.querySelector('.send-icon, button, [role="button"]')) {
               let cur = composerRoot.parentElement;
-              for (let i = 0; i < 10 && cur && cur !== document.body; i++) {
+              for (let i = 0; i < 10 && cur && cur !== (doc && doc.body); i++) {
                 if (cur.querySelector('.send-icon, button.send-button, [aria-label*="Send" i], [aria-label*="Envoyer" i]')) {
                   composerRoot = cur;
                   break;
@@ -499,16 +500,16 @@
         '[class*="reasoning"]'
       ],
       responseSelectors: [
-        '.markdown',
         '[data-message-author-role="assistant"] .markdown',
         '[data-message-author-role="assistant"]',
         '[data-testid="assistant-message"] .markdown',
         '[data-testid="assistant-message"]',
-        '.agent-turn .markdown',
-        '.agent-turn',
         'article [data-message-author-role="assistant"] .markdown',
         'div[data-message-author-role="assistant"] .markdown',
-        'div[data-message-author-role="assistant"]'
+        'div[data-message-author-role="assistant"]',
+        '.agent-turn .markdown',
+        '.agent-turn',
+        '.markdown'
       ],
       fileInputSelectors: [
         'input[type="file"][multiple]',
@@ -567,9 +568,9 @@
         'textarea[name="search"]',
         'textarea[placeholder*="DeepSeek" i]',
         'textarea[placeholder]',
-        'textarea._27c9245',
         'div[role="textbox"][contenteditable="true"]',
-        'div[contenteditable="true"]'
+        'div[contenteditable="true"]',
+        'textarea'
       ],
       sendButtonSelectors: [
         'div[role="button"].ds-button--primary.ds-button--circle:not(.ds-button--disabled):not(.ds-button--warning)',
@@ -869,18 +870,10 @@
       rawText = target.textContent || '';
     }
 
-    // Strip user message prefix if ancestor container captured the full turn
-    if (rawText.includes('ChatGPT a dit :')) {
-      const parts = rawText.split('ChatGPT a dit :');
-      rawText = parts[parts.length - 1];
-    } else if (rawText.includes('ChatGPT said :')) {
-      const parts = rawText.split('ChatGPT said :');
-      rawText = parts[parts.length - 1];
-    } else if (rawText.includes('ChatGPT said:')) {
-      const parts = rawText.split('ChatGPT said:');
-      rawText = parts[parts.length - 1];
+    // Strip leading speaker label strictly for ChatGPT turns (anchored at start; never splits body text)
+    if (provider && provider.id === 'chatgpt') {
+      rawText = rawText.replace(/^\s*(?:ChatGPT(?:\s+(?:a\s+dit|said)\s*:)?\s*)+/i, '');
     }
-    rawText = rawText.replace(/^ChatGPT\s*/i, '');
 
     return rawText
       .replace(/\r\n/g, '\n')

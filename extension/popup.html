@@ -192,7 +192,7 @@
 </head>
 <body>
   <div class="header">
-    <span class="title">WebAI Bridge v2.4</span>
+    <span class="title" id="bridgeTitle">WebAI Bridge</span>
     <span class="badge" id="connectionBadge">
       <span class="dot disconnected" id="statusDot"></span>
       <span id="statusText">Checking...</span>
@@ -233,7 +233,7 @@
 
   <div class="card">
     <label class="field-label" for="portInput">WebSocket Port (1024 - 65535)</label>
-    <input type="number" id="portInput" min="1024" max="65535" value="8765" />
+    <input type="number" id="portInput" min="1024" max="65535" value="4545" />
 
     <label class="field-label" for="tokenInput">Session Auth Token (Optional / Per-Session)</label>
     <input type="password" id="tokenInput" placeholder="Paste token from ~/.webai-bridge/session.json" />

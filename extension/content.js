@@ -1,5 +1,5 @@
 /**
- * WebAI Bridge - Unified Content Script Entrypoint (v2.4.0-alpha.1)
+ * WebAI Bridge - Unified Content Script Entrypoint (v2.4.0)
  * Orchestrates modular sub-systems:
  *   - content-providers.js (Gemini, Claude, ChatGPT, DeepSeek hash-free, AI Studio)
  *   - content-upload.js (Formal UploadStateMachine: IDLE -> VALIDATING -> PREPARING -> INJECTING -> VERIFYING_DOM -> READY | FAILED)
@@ -74,6 +74,7 @@
             provider: provider.id,
             providerName: provider.name,
             connected: Boolean(activeRuntime.ws && activeRuntime.ws.readyState === 1),
+            wasReplaced: Boolean(activeRuntime.wasReplaced),
             port: activeRuntime.port,
             busy: activeRuntime.isBusy,
             activeRequestId: activeRuntime.activeRequestId,
@@ -124,7 +125,7 @@
         const newPort = changes.bridgePort ? changes.bridgePort.newValue : activeRuntime.port;
         const newToken = changes.bridgeAuthToken ? changes.bridgeAuthToken.newValue : activeRuntime.authToken;
         if (changes.bridgePort || changes.bridgeAuthToken) {
-          activeRuntime.reconfigure(newPort, newToken);
+          activeRuntime.reconfigure(newPort, newToken).catch(() => {});
         }
         if (changes.debugMode) {
           activeRuntime.setDebugMode(changes.debugMode.newValue);
@@ -158,7 +159,12 @@
     uploadAttachmentsToDOM,
     sanitizeFileName: Upload.sanitizeFileName,
     buildFileObject: Upload.buildFileObject,
+    resolveComposerContainer: Upload.resolveComposerContainer,
+    filesMatchBatch: Upload.filesMatchBatch,
     DEFAULT_BRIDGE_PORT: Core.DEFAULT_BRIDGE_PORT,
+    FILE_UPLOAD_THRESHOLD: Core.FILE_UPLOAD_THRESHOLD,
+    DEFAULT_STARTUP_TIMEOUT_MS: Core.DEFAULT_STARTUP_TIMEOUT_MS,
+    prepareLargePromptPayload: Core.prepareLargePromptPayload,
     buildWebSocketUrl: Core.buildWebSocketUrl,
     injectPromptText: Core.injectPromptText,
     triggerSend: Core.triggerSend,

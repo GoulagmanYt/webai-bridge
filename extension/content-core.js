@@ -1,8 +1,8 @@
 /**
  * WebAI Bridge - Content Script Core Execution & Streaming Engine
  * Manages authenticated WebSocket lifecycle, configurable port/token via chrome.storage,
- * prompt injection, real-time MutationObserver streaming chunks (STREAM_CHUNK),
- * and adaptive response stabilization.
+ * prompt injection, large-prompt auto-attachment fallback, real-time MutationObserver
+ * streaming chunks (STREAM_CHUNK), and adaptive response stabilization.
  * Dual-environment module: Browser Content Script (window) & Node.js (CommonJS).
  */
 (function (root, factory) {
@@ -16,9 +16,11 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (Providers, Upload) {
   'use strict';
 
-  const DEFAULT_BRIDGE_PORT = 8765;
+  const DEFAULT_BRIDGE_PORT = 4545;
+  const FILE_UPLOAD_THRESHOLD = 20000;
   const STREAM_TICK_MS = 1200;
   const STABILIZE_QUIET_MS = 4500;
+  const DEFAULT_STARTUP_TIMEOUT_MS = 45000;
   const MAX_GENERATION_WAIT_MS = 600000; // 10 minutes max generation in tab
 
   /**
@@ -31,9 +33,49 @@
   }
 
   /**
+   * Converts an oversized inline prompt (> threshold chars) into a `.txt` attachment
+   * merged with any existing attachments so rich-text/ProseMirror/Quill inputs never stall or truncate.
+   * @param {string} promptText
+   * @param {Array<object>} [existingFiles]
+   * @param {number} [threshold=FILE_UPLOAD_THRESHOLD]
+   * @returns {{ prompt: string, files: Array<object>, converted: boolean, attachmentName?: string }}
+   */
+  function prepareLargePromptPayload(promptText, existingFiles = [], threshold = FILE_UPLOAD_THRESHOLD) {
+    const prompt = typeof promptText === 'string' ? promptText : String(promptText || '');
+    const files = Array.isArray(existingFiles) ? existingFiles.slice() : [];
+
+    if (prompt.length <= threshold) {
+      return { prompt, files, converted: false };
+    }
+
+    const suffix = Math.random().toString(36).slice(2, 8);
+    const attachmentName = `context_${suffix}.txt`;
+    files.push({
+      name: attachmentName,
+      content: prompt,
+      encoding: 'utf8',
+      mimeType: 'text/plain'
+    });
+
+    const compactPrompt =
+      `[WebAI Bridge]\n\n` +
+      `The full prompt and instructions exceeded the inline editor threshold (${prompt.length} chars) ` +
+      `and have been attached natively as "${attachmentName}".\n` +
+      `Read "${attachmentName}" (along with any other attached files) completely and execute the ` +
+      `"CURRENT TASK TO EXECUTE" section inside it following all orchestrator instructions.`;
+
+    return {
+      prompt: compactPrompt,
+      files,
+      converted: true,
+      attachmentName
+    };
+  }
+
+  /**
    * Reads bridge connection settings (port & authToken) from chrome.storage.local
    * with safe defaults when running in tests or without storage permissions.
-   * @returns {Promise<{ port: number, authToken: string, autoConnect: boolean }>}
+   * @returns {Promise<{ port: number, authToken: string, autoConnect: boolean, debugMode: boolean }>}
    */
   async function loadBridgeConfig() {
     const defaults = {
@@ -273,7 +315,6 @@
 
   /**
    * Triggers prompt submission via the provider's send button or Enter key event.
-   * Dispatches pointerdown, mousedown, mouseup, click, and keyboard Enter for maximum SPA compatibility.
    * @param {object} provider
    * @param {Element} inputEl
    * @param {object} [options]
@@ -400,6 +441,7 @@
   /**
    * Observes the DOM for streaming response chunks and emits progressive updates via `onProgress`
    * until the response stabilizes and streaming indicators disappear.
+   * Fails fast with GENERATION_NOT_STARTED if generation never begins within `startupTimeoutMs`.
    * @param {object} params
    * @param {object} params.provider
    * @param {Element} params.inputEl
@@ -407,6 +449,8 @@
    * @param {number} params.baselineCount
    * @param {Function} [params.onProgress]
    * @param {number} [params.maxWaitMs]
+   * @param {number} [params.startupTimeoutMs]
+   * @param {number} [params.tickMs]
    * @returns {Promise<{ text: string, elapsedMs: number, chunksEmitted: number }>}
    */
   async function captureStreamingResponse(params) {
@@ -417,7 +461,9 @@
       baselineCount = 0,
       onProgress,
       logger = ((_c, _l, _m, _d) => {}),
-      maxWaitMs = MAX_GENERATION_WAIT_MS
+      maxWaitMs = MAX_GENERATION_WAIT_MS,
+      startupTimeoutMs = DEFAULT_STARTUP_TIMEOUT_MS,
+      tickMs = STREAM_TICK_MS
     } = params;
 
     const startTime = Date.now();
@@ -426,7 +472,11 @@
     let hasStarted = false;
     let chunksEmitted = 0;
     let mutationDirty = false;
-    logger('STREAM', 'info', 'Streaming observer started', { baselineCount, baselineLength: baselineText.length });
+    logger('STREAM', 'info', 'Streaming observer started', {
+      baselineCount,
+      baselineLength: baselineText.length,
+      startupTimeoutMs
+    });
 
     let observer = null;
     if (typeof MutationObserver !== 'undefined' && typeof document !== 'undefined' && document.body) {
@@ -457,6 +507,18 @@
               isNewTurn
             });
           }
+        }
+
+        if (!hasStarted && startupTimeoutMs > 0 && (Date.now() - startTime) >= startupTimeoutMs) {
+          logger('STREAM', 'error', 'Generation did not start within startup timeout', {
+            startupTimeoutMs,
+            elapsedMs: Date.now() - startTime
+          });
+          const err = new Error(
+            `Error: Generation did not start after ${Math.round(startupTimeoutMs / 1000)}s on ${provider ? provider.id : 'unknown'}`
+          );
+          err.code = 'GENERATION_NOT_STARTED';
+          throw err;
         }
 
         if (hasStarted && isNewTurn && snapshot.text && snapshot.text !== lastText) {
@@ -523,7 +585,7 @@
           };
         }
 
-        await sleep(STREAM_TICK_MS);
+        await sleep(tickMs);
       }
 
       if (lastText.length > 0) {
@@ -548,7 +610,8 @@
   /**
    * Performs a comprehensive, live DOM inspection of the active Web AI tab.
    * Extracts input element state, send/stop button states, computed styles,
-   * visible error banners, composer snippet, and custom selector queries.
+   * visible error banners, composer snippet (parent container, never inputEl itself),
+   * and custom selector queries.
    * @param {BridgeContentRuntime} runtime
    * @param {object} [options]
    * @returns {object}
@@ -568,6 +631,8 @@
         readyState: doc ? doc.readyState : 'unknown',
         isBusy: runtime ? runtime.isBusy : false,
         activeRequestId: runtime ? runtime.activeRequestId : null,
+        uploadState: runtime && runtime.uploadMachine ? runtime.uploadMachine.state : 'IDLE',
+        wasReplaced: runtime ? Boolean(runtime.wasReplaced) : false,
         debugMode: runtime ? runtime.debugMode : false
       },
       input: null,
@@ -695,12 +760,28 @@
       }
     }
 
-    // 6. Composer HTML snippet
+    // 6. Composer HTML snippet (always resolved from parentElement so inputEl itself is not matched)
     try {
       const inputEl = Providers.findInputElement(provider);
-      const composer = inputEl
-        ? (inputEl.closest('form, [class*="input"], [class*="composer"], .aaff8b8f, ._77cefa5') || inputEl.parentElement)
-        : null;
+      const isDocRoot = (el) => !el || el === doc.body || el === doc.documentElement;
+      let composer = null;
+      if (inputEl && inputEl.parentElement) {
+        const candidate = inputEl.parentElement.closest
+          ? inputEl.parentElement.closest(
+              '.input-area-container, .initial-input-area-container, .initial-input-area, ' +
+              '.chat-input-container, form, fieldset, [class*="composer"], ' +
+              '[class*="inputWrapper"], [class*="inputFullContainer"], [class*="input-area"], ' +
+              '[class*="chat-input"], [role="region"]'
+            )
+          : null;
+        if (candidate && !isDocRoot(candidate)) {
+          composer = candidate;
+        } else if (inputEl.parentElement.parentElement && !isDocRoot(inputEl.parentElement.parentElement)) {
+          composer = inputEl.parentElement.parentElement;
+        } else if (!isDocRoot(inputEl.parentElement)) {
+          composer = inputEl.parentElement;
+        }
+      }
       if (composer && composer.outerHTML) {
         result.composerSnippet = composer.outerHTML.slice(0, 2500);
       }
@@ -728,6 +809,7 @@
       this.sessionSecret = null;
       this.isBusy = false;
       this.activeRequestId = null;
+      this.wasReplaced = false;
       this.reconnectTimer = null;
       this.reconnectAttempts = 0;
       this.heartbeatTimer = null;
@@ -833,6 +915,9 @@
       const config = await loadBridgeConfig();
       this.port = config.port;
       this.authToken = config.authToken;
+      if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+        this.debugMode = Boolean(config.debugMode);
+      }
 
       if (!config.autoConnect) return;
 
@@ -840,15 +925,19 @@
         return;
       }
 
+      this.wasReplaced = false;
       const wsUrl = buildWebSocketUrl(this.port, this.authToken);
+      let socket;
       try {
-        this.ws = new WebSocket(wsUrl);
+        socket = new WebSocket(wsUrl);
+        this.ws = socket;
       } catch (_) {
         this.scheduleReconnect();
         return;
       }
 
-      this.ws.onopen = () => {
+      socket.onopen = () => {
+        if (this.ws !== socket) return;
         this.reconnectAttempts = 0;
         this.sendWs({
           type: 'AUTH_HELLO',
@@ -861,7 +950,8 @@
         this.startHeartbeat();
       };
 
-      this.ws.onmessage = (event) => {
+      socket.onmessage = (event) => {
+        if (this.ws !== socket) return;
         let msg;
         try {
           msg = JSON.parse(event.data);
@@ -871,13 +961,18 @@
         this.handleServerMessage(msg);
       };
 
-      this.ws.onclose = () => {
+      socket.onclose = () => {
+        if (this.ws === socket) {
+          this.ws = null;
+        }
         this.stopHeartbeat();
         this.sessionSecret = null;
-        this.scheduleReconnect();
+        if (!this.wasReplaced) {
+          this.scheduleReconnect();
+        }
       };
 
-      this.ws.onerror = () => {
+      socket.onerror = () => {
         // Error is followed by onclose which schedules reconnect
       };
     }
@@ -900,8 +995,15 @@
       }
     }
 
+    cancelReconnect() {
+      if (this.reconnectTimer) {
+        clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = null;
+      }
+    }
+
     scheduleReconnect() {
-      if (this.reconnectTimer) return;
+      if (this.wasReplaced || this.reconnectTimer) return;
       const backoff = Math.min(1000 * Math.pow(1.5, this.reconnectAttempts), 10000);
       this.reconnectAttempts++;
       this.reconnectTimer = setTimeout(() => {
@@ -911,7 +1013,7 @@
     }
 
     /**
-     * Reconnects immediately when port or authToken changes in popup.
+     * Reconnects immediately when port or authToken changes in popup (or user re-claims tab).
      * @param {number} newPort
      * @param {string} newToken
      * @param {boolean} [newDebugMode]
@@ -920,13 +1022,24 @@
       if (newPort) this.port = Number(newPort) || DEFAULT_BRIDGE_PORT;
       if (typeof newToken === 'string') this.authToken = newToken.trim();
       if (newDebugMode !== undefined) this.setDebugMode(newDebugMode);
+
+      this.wasReplaced = false;
+      this.cancelReconnect();
+      this.reconnectAttempts = 0;
+      this.stopHeartbeat();
+      this.sessionSecret = null;
+
       if (this.ws) {
+        const oldWs = this.ws;
+        this.ws = null;
         try {
-          this.ws.close();
+          oldWs.onclose = null;
+          oldWs.onerror = null;
+          oldWs.onmessage = null;
+          oldWs.close();
         } catch (_) {
           // Ignore
         }
-        this.ws = null;
       }
       await this.connect();
     }
@@ -937,6 +1050,15 @@
      */
     async handleServerMessage(msg) {
       if (!msg || typeof msg !== 'object') return;
+
+      if (msg.type === 'replaced') {
+        this.wasReplaced = true;
+        this.cancelReconnect();
+        this.stopHeartbeat();
+        this.sessionSecret = null;
+        this.log('SYSTEM', 'warn', 'Connection replaced by another browser tab; auto-reconnect suspended.');
+        return;
+      }
 
       if (msg.type === 'AUTH_OK') {
         if (msg.sessionSecret) {
@@ -993,6 +1115,10 @@
             providerId: this.provider ? this.provider.id : 'unknown',
             isEmptyChat: snapshot.count === 0,
             chatKey: typeof window !== 'undefined' && window.location ? window.location.href : 'unknown',
+            busy: this.isBusy,
+            activeRequestId: this.activeRequestId,
+            uploadState: this.uploadMachine.state,
+            wasReplaced: this.wasReplaced,
             debugMode: this.debugMode,
             logCount: this.debugLogs.length,
             domDiagnostic: {
@@ -1012,6 +1138,7 @@
 
     /**
      * Executes a full prompt + optional file upload cycle and streams chunks back to the server.
+     * Automatically converts oversized prompts (> FILE_UPLOAD_THRESHOLD) into `.txt` attachments.
      * @param {object} task
      */
     async executePromptTask(task) {
@@ -1024,6 +1151,7 @@
           id: requestId,
           type: 'ERROR',
           requestId,
+          jobId: requestId,
           code: 'ERR_TAB_BUSY',
           message: `Tab is already executing request ${this.activeRequestId}`
         });
@@ -1044,13 +1172,24 @@
 
         const baseline = Providers.getLatestResponseSnapshot(this.provider);
 
-        // Step 1: Formal file upload state machine
-        const files = Array.isArray(task.files)
+        // Step 1: Normalize files + convert oversized inline prompts (> 20k chars) into an attachment
+        const rawFiles = Array.isArray(task.files)
           ? task.files
           : (Array.isArray(task.attachments) ? task.attachments : []);
 
+        const prepared = prepareLargePromptPayload(task.prompt || '', rawFiles);
+        const files = prepared.files;
+        const promptToInject = prepared.prompt;
+
+        if (prepared.converted) {
+          this.log('UPLOAD', 'info', `Oversized prompt converted to attachment "${prepared.attachmentName}"`, {
+            originalLength: (task.prompt || '').length,
+            totalFiles: files.length
+          });
+        }
+
         if (files.length > 0) {
-          this.log('UPLOAD', 'info', `Starting upload of ${files.length} attachments`);
+          this.log('UPLOAD', 'info', `Starting upload of ${files.length} attachment(s)`);
           this.sendWs({
             id: requestId,
             type: 'UPLOAD_PROGRESS',
@@ -1058,7 +1197,9 @@
             state: Upload.UPLOAD_STATES.VALIDATING,
             count: files.length
           });
-          await this.uploadMachine.executeUpload(files, this.provider);
+          await this.uploadMachine.executeUpload(files, this.provider, {
+            logger: (c, l, m, d) => this.log(c, l, m, d)
+          });
           this.sendWs({
             id: requestId,
             type: 'UPLOAD_PROGRESS',
@@ -1070,7 +1211,7 @@
 
         // Step 2: Inject prompt and trigger send
         this.log('INPUT', 'debug', 'Injecting prompt text into DOM input');
-        injectPromptText(inputEl, task.prompt || '', {
+        injectPromptText(inputEl, promptToInject, {
           logger: (c, l, m, d) => this.log(c, l, m, d)
         });
         const sendMethod = await triggerSend(this.provider, inputEl, {
@@ -1094,6 +1235,7 @@
           baselineCount: baseline.count,
           logger: (c, l, m, d) => this.log(c, l, m, d),
           maxWaitMs: task.maxWaitMs || MAX_GENERATION_WAIT_MS,
+          startupTimeoutMs: task.startupTimeoutMs || DEFAULT_STARTUP_TIMEOUT_MS,
           onProgress: (progress) => {
             this.sendWs({
               id: requestId,
@@ -1148,9 +1290,12 @@
 
   return {
     DEFAULT_BRIDGE_PORT,
+    FILE_UPLOAD_THRESHOLD,
     STREAM_TICK_MS,
     STABILIZE_QUIET_MS,
+    DEFAULT_STARTUP_TIMEOUT_MS,
     MAX_GENERATION_WAIT_MS,
+    prepareLargePromptPayload,
     loadBridgeConfig,
     buildWebSocketUrl,
     injectPromptText,

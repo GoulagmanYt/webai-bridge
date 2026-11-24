@@ -6,16 +6,67 @@
 (function () {
   'use strict';
 
-  const DEFAULT_PORT = 8765;
+  const DEFAULT_PORT = 4545;
 
   function validatePort(value) {
     const num = Number(value);
     return Number.isInteger(num) && num >= 1024 && num <= 65535 ? num : null;
   }
 
+  function getManifestVersion() {
+    try {
+      if (typeof chrome !== 'undefined' && chrome.runtime && typeof chrome.runtime.getManifest === 'function') {
+        const manifest = chrome.runtime.getManifest();
+        if (manifest && manifest.version) {
+          return String(manifest.version);
+        }
+      }
+    } catch (_) {
+      // Ignore outside extension context
+    }
+    return '';
+  }
+
+  function sendTabMessageSafe(tabId, message, onDone) {
+    if (typeof chrome === 'undefined' || !chrome.tabs || typeof chrome.tabs.sendMessage !== 'function') {
+      if (typeof onDone === 'function') onDone(null, new Error('Extension API not available'));
+      return;
+    }
+    try {
+      chrome.tabs.sendMessage(tabId, message, (response) => {
+        const lastErr = chrome.runtime && chrome.runtime.lastError ? chrome.runtime.lastError : null;
+        if (typeof onDone === 'function') {
+          onDone(lastErr ? null : response, lastErr);
+        }
+      });
+    } catch (err) {
+      if (typeof onDone === 'function') onDone(null, err);
+    }
+  }
+
+  function queryActiveTab(onTab) {
+    if (typeof chrome === 'undefined' || !chrome.tabs || typeof chrome.tabs.query !== 'function') {
+      onTab(null, new Error('Extension API not available'));
+      return;
+    }
+    try {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        const lastErr = chrome.runtime && chrome.runtime.lastError ? chrome.runtime.lastError : null;
+        if (lastErr) {
+          onTab(null, lastErr);
+          return;
+        }
+        onTab(tabs && tabs[0] ? tabs[0] : null, null);
+      });
+    } catch (err) {
+      onTab(null, err);
+    }
+  }
+
   function initPopup() {
     if (typeof document === 'undefined') return;
 
+    const bridgeTitle = document.getElementById('bridgeTitle');
     const portInput = document.getElementById('portInput');
     const tokenInput = document.getElementById('tokenInput');
     const saveBtn = document.getElementById('saveBtn');
@@ -29,6 +80,11 @@
     const debugToggle = document.getElementById('debugToggle');
     const copyLogsBtn = document.getElementById('copyLogsBtn');
     const clearLogsBtn = document.getElementById('clearLogsBtn');
+
+    if (bridgeTitle) {
+      const version = getManifestVersion();
+      bridgeTitle.textContent = version ? `WebAI Bridge v${version}` : 'WebAI Bridge';
+    }
 
     function setFeedback(text, isError) {
       if (!feedbackMsg) return;
@@ -53,6 +109,9 @@
       if (status.connected) {
         statusDot.className = status.busy ? 'dot busy' : 'dot connected';
         statusText.textContent = status.busy ? 'Streaming...' : `Connected (:${status.port})`;
+      } else if (status.wasReplaced) {
+        statusDot.className = 'dot disconnected';
+        statusText.textContent = 'Replaced (Click Save)';
       } else {
         statusDot.className = 'dot disconnected';
         statusText.textContent = `Offline (:${status.port || DEFAULT_PORT})`;
@@ -60,30 +119,25 @@
     }
 
     function queryActiveTabStatus() {
-      if (typeof chrome === 'undefined' || !chrome.tabs) return;
-      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        const activeTab = tabs && tabs[0];
-        if (!activeTab || !activeTab.id) {
+      queryActiveTab((activeTab, err) => {
+        if (err || !activeTab || !activeTab.id) {
           updateStatusUI(null);
           return;
         }
-        try {
-          chrome.tabs.sendMessage(activeTab.id, { type: 'WEBAI_GET_TAB_STATUS' }, (response) => {
-            if (chrome.runtime && chrome.runtime.lastError) {
-              updateStatusUI(null);
-              return;
-            }
-            updateStatusUI(response);
-          });
-        } catch (_) {
-          updateStatusUI(null);
-        }
+        sendTabMessageSafe(activeTab.id, { type: 'WEBAI_GET_TAB_STATUS' }, (response, msgErr) => {
+          if (msgErr || !response) {
+            updateStatusUI(null);
+            return;
+          }
+          updateStatusUI(response);
+        });
       });
     }
 
     // Load saved settings
     if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
       chrome.storage.local.get(['bridgePort', 'bridgeAuthToken', 'debugMode'], (items) => {
+        if (chrome.runtime && chrome.runtime.lastError) return;
         if (portInput) {
           portInput.value = validatePort(items && items.bridgePort) || DEFAULT_PORT;
         }
@@ -101,18 +155,21 @@
         const enabled = Boolean(debugToggle.checked);
         if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
           chrome.storage.local.set({ debugMode: enabled }, () => {
-            setFeedback(enabled ? 'Debug mode enabled (detailed logs)' : 'Debug mode disabled', false);
-            if (chrome.tabs) {
-              chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-                const activeTab = tabs && tabs[0];
-                if (activeTab && activeTab.id) {
-                  chrome.tabs.sendMessage(activeTab.id, {
-                    type: 'WEBAI_SET_DEBUG_MODE',
-                    debugMode: enabled
-                  });
-                }
-              });
+            if (chrome.runtime && chrome.runtime.lastError) {
+              setFeedback('Failed to save debug mode', true);
+              return;
             }
+            setFeedback(enabled ? 'Debug mode enabled (detailed logs)' : 'Debug mode disabled', false);
+            queryActiveTab((activeTab, err) => {
+              if (err || !activeTab || !activeTab.id) return;
+              sendTabMessageSafe(
+                activeTab.id,
+                { type: 'WEBAI_SET_DEBUG_MODE', debugMode: enabled },
+                () => {
+                  // Intentionally swallow lastError on non-supported tabs while keeping setting persisted
+                }
+              );
+            });
           });
         }
       });
@@ -120,18 +177,17 @@
 
     if (copyLogsBtn) {
       copyLogsBtn.addEventListener('click', () => {
-        if (typeof chrome === 'undefined' || !chrome.tabs) {
-          setFeedback('Extension API not available', true);
-          return;
-        }
-        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-          const activeTab = tabs && tabs[0];
+        queryActiveTab((activeTab, err) => {
+          if (err) {
+            setFeedback('Extension API not available', true);
+            return;
+          }
           if (!activeTab || !activeTab.id) {
             setFeedback('No active tab found', true);
             return;
           }
-          chrome.tabs.sendMessage(activeTab.id, { type: 'WEBAI_GET_DEBUG_LOGS' }, (res) => {
-            if (chrome.runtime && chrome.runtime.lastError) {
+          sendTabMessageSafe(activeTab.id, { type: 'WEBAI_GET_DEBUG_LOGS' }, (res, msgErr) => {
+            if (msgErr) {
               setFeedback('Unsupported tab', true);
               return;
             }
@@ -140,7 +196,9 @@
               setFeedback('No logs in buffer', false);
               return;
             }
-            const text = logs.map((l) => `[${l.iso || new Date(l.timestamp).toISOString()}] [${l.category}] [${(l.level || 'info').toUpperCase()}] ${l.message} ${l.details ? JSON.stringify(l.details) : ''}`).join('\n');
+            const text = logs
+              .map((l) => `[${l.iso || new Date(l.timestamp).toISOString()}] [${l.category}] [${(l.level || 'info').toUpperCase()}] ${l.message} ${l.details ? JSON.stringify(l.details) : ''}`)
+              .join('\n');
             if (navigator.clipboard && navigator.clipboard.writeText) {
               navigator.clipboard.writeText(text).then(() => {
                 setFeedback(`${logs.length} logs copied!`, false);
@@ -157,11 +215,16 @@
 
     if (clearLogsBtn) {
       clearLogsBtn.addEventListener('click', () => {
-        if (typeof chrome === 'undefined' || !chrome.tabs) return;
-        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-          const activeTab = tabs && tabs[0];
-          if (!activeTab || !activeTab.id) return;
-          chrome.tabs.sendMessage(activeTab.id, { type: 'WEBAI_CLEAR_DEBUG_LOGS' }, () => {
+        queryActiveTab((activeTab, err) => {
+          if (err || !activeTab || !activeTab.id) {
+            setFeedback('No active tab found', true);
+            return;
+          }
+          sendTabMessageSafe(activeTab.id, { type: 'WEBAI_CLEAR_DEBUG_LOGS' }, (_res, msgErr) => {
+            if (msgErr) {
+              setFeedback('Unsupported tab', true);
+              return;
+            }
             setFeedback('Log buffer cleared', false);
           });
         });
@@ -184,25 +247,33 @@
               bridgeAuthToken: authToken
             },
             () => {
-              setFeedback(`Saved port ${validPort} & reconnecting...`, false);
-              if (chrome.tabs) {
-                chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-                  const activeTab = tabs && tabs[0];
-                  if (activeTab && activeTab.id) {
-                    chrome.tabs.sendMessage(
-                      activeTab.id,
-                      {
-                        type: 'WEBAI_RECONFIGURE_BRIDGE',
-                        port: validPort,
-                        authToken
-                      },
-                      () => {
-                        setTimeout(queryActiveTabStatus, 350);
-                      }
-                    );
-                  }
-                });
+              if (chrome.runtime && chrome.runtime.lastError) {
+                setFeedback('Failed to save settings', true);
+                return;
               }
+              setFeedback(`Saved port ${validPort} & reconnecting...`, false);
+              queryActiveTab((activeTab, err) => {
+                if (err || !activeTab || !activeTab.id) {
+                  setFeedback(`Saved port ${validPort}`, false);
+                  return;
+                }
+                sendTabMessageSafe(
+                  activeTab.id,
+                  {
+                    type: 'WEBAI_RECONFIGURE_BRIDGE',
+                    port: validPort,
+                    authToken
+                  },
+                  (_res, msgErr) => {
+                    if (msgErr) {
+                      setFeedback(`Saved port ${validPort} (open a supported AI tab)`, false);
+                      updateStatusUI(null);
+                      return;
+                    }
+                    setTimeout(queryActiveTabStatus, 350);
+                  }
+                );
+              });
             }
           );
         }
@@ -228,6 +299,6 @@
   }
 
   if (typeof module === 'object' && module.exports) {
-    module.exports = { DEFAULT_PORT, validatePort };
+    module.exports = { DEFAULT_PORT, validatePort, getManifestVersion };
   }
 })();
