@@ -6,11 +6,13 @@ Thanks for wanting to help! This project is open source, and anyone can propose 
 
 1. **Open an issue first** for anything bigger than a typo, so we can agree on the approach.
 2. **Fork** the repo and create a branch: `fix/short-description` or `feat/short-description`.
-3. Make your change and run:
+3. Make your change and run the same checks as CI:
    ```bash
    npm install
    npm test
+   npm run audit
    ```
+   For server or protocol changes, also run `node test/live-integration.mjs`; for popup, floating-pill, or provider-selector changes, verify manually in Chrome after reloading the unpacked extension.
 4. **Open a pull request** to `main` and fill in the template.
 5. The maintainer reviews it. You may be asked for changes. Once approved, it's merged.
 
@@ -30,7 +32,7 @@ By submitting a pull request, you agree that your contribution is licensed under
 
 ## Reporting bugs
 
-Use the [bug report form](../../issues/new/choose) and include provider, browser, OS and the button color when it fails.
+Use the [bug report form](../../issues/new/choose) and include provider, browser, OS, and the Obsidian Signal pill/popup state when it fails.
 
 ## Security issues
 

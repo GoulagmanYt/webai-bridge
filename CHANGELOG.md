@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **Obsidian Signal UI & restored Shadow-DOM Floating Pill**: Redesigned `extension/popup.html` and `extension/popup.js` with an Obsidian Signal dark palette, tabular telemetry grid (`Provider`, `Tab Mode`, `Upload State`, `Active Job`), show/hide `#toggleTokenBtn`, Enter-to-save, CSS semantic status badges, `:focus-visible`, and `prefers-reduced-motion`; added `FloatingBridgePill` (isolated Shadow DOM, viewport-clamped drag persistence in `webai_bridge_pill_pos`, one-click Live ↔ Standby / Reclaim toggle via `webai_bridge_dedicated`) in `extension/content.js` backed by `BridgeContentRuntime.setDedicated()` / `disconnect()` / `onStateChange()` in `extension/content-core.js`, plus Milestone 4.10 tests and doctor checks.
+- **Obsidian Signal UI & restored Shadow-DOM Floating Pill**: Redesigned `extension/popup.html` and `extension/popup.js` with an Obsidian Signal dark palette, tabular telemetry grid (`Provider`, `Tab Mode`, `Upload State`, `Active Job`), show/hide `#toggleTokenBtn`, Enter-to-save, CSS semantic status badges, `:focus-visible`, and `prefers-reduced-motion`; added `FloatingBridgePill` (isolated Shadow DOM, viewport-clamped drag persistence in `webai_bridge_pill_pos`, one-click Live ↔ Standby / Reclaim toggle via `webai_bridge_dedicated`) in `extension/content.js` backed by `BridgeContentRuntime.setDedicated()` / `disconnect()` / `onStateChange()` in `extension/content-core.js`, plus headless DOM/unit tests (`Milestone 4.10` in `test/milestone4.test.mjs`) and doctor checks (`36` assertions in `scripts/doctor.mjs`).
 - **Orphan-process watchdog (`startParentWatchdog`)**: Periodically verifies `process.ppid` (opt-out via `BRIDGE_NO_WATCHDOG=1`) so orphaned bridge instances exit cleanly if the IDE terminates without closing `stdin`.
 - **Resilient `EADDRINUSE` bind retry loop**: Retries WebSocket binding up to 10 attempts (`BIND_MAX_ATTEMPTS = 10`, `BIND_RETRY_DELAY_MS = 1000`) and exits non-zero cleanly if the port remains permanently occupied.
 - **Opt-in file logging (`BRIDGE_LOG_FILE`)**: Appends timestamped PID-tagged diagnostics when configured (`*.log` ignored in `.gitignore`).
@@ -76,7 +76,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Native File Attachment Upload (`uploadAttachmentsToDOM`)**: Replaces heavy text prompt DOM injection with native browser `DataTransfer`, `File` API, and synthetic `ClipboardEvent('paste')` vectors across Gemini, Claude, ChatGPT, DeepSeek, and Google AI Studio.
-- **Zero Truncation Guarantee**: Complete files and project context (`00_PROJECT_CONTEXT_AND_BRIEFING.md`) are attached natively without size restrictions or truncation.
+- **Zero Truncation Guarantee** *(v2.3.0 behavior)*: Complete files and project context (`00_PROJECT_CONTEXT_AND_BRIEFING.md`) were attached natively without size limits *(later releases introduced the `2 MB` per-attachment limit and discovery context caps)*.
 - **Diagnostic Doctor (`scripts/doctor.mjs`)**: Automated test suite and architecture auditor integrated via `npm run doctor` and `npm test`.
 - **Universal Extension Sanitization**: Automatic mapping of non-standard extensions (`.mjs`, `.mdc`, etc.) to universally accepted mime-types and extensions (`.txt`).
 

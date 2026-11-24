@@ -5,25 +5,25 @@
 # WebAI Bridge
 ### The Zero-Token MCP Orchestrator
 
-**Stop paying twice for AI. Connect your IDE agent directly to your flat-rate Claude, ChatGPT, Gemini, and DeepSeek web subscriptions via MCP — $0 API token cost, native file uploads, zero copy-paste.**
+**Connect your IDE agent directly to your logged-in Claude, ChatGPT, Gemini, AI Studio, and DeepSeek browser sessions via MCP — zero bridge-added API token billing, native file uploads, and minimal context-sync overhead.**
 
 [![GitHub Stars](https://img.shields.io/github/stars/GoulagmanYt/webai-bridge?style=flat-square&logo=github&color=F59E0B)](https://github.com/GoulagmanYt/webai-bridge/stargazers)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg?style=flat-square)](LICENSE)
 [![CI Status](https://img.shields.io/github/actions/workflow/status/GoulagmanYt/webai-bridge/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/GoulagmanYt/webai-bridge/actions)
 [![Release](https://img.shields.io/github/v/release/GoulagmanYt/webai-bridge?style=flat-square&color=10B981)](https://github.com/GoulagmanYt/webai-bridge/releases/latest)
-[![API Token Cost](https://img.shields.io/badge/API%20Token%20Cost-%240%20%2F%20Token-10B981?style=flat-square&logo=cashapp&logoColor=white)](#-the-double-billing-trap)
+[![API Token Cost](https://img.shields.io/badge/Bridge%20API%20Fee-%240%20%2F%20Token-10B981?style=flat-square&logo=cashapp&logoColor=white)](#-the-double-billing-trap)
 [![Protocol](https://img.shields.io/badge/MCP-Protocol%20Ready-3B82F6?style=flat-square)](https://modelcontextprotocol.io/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](CONTRIBUTING.md)
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Claude-Opus_5.5_|_Fable_5.1_|_Sonnet_5.5-D97706?style=flat-square&logo=anthropic&logoColor=white" alt="Claude">
-  <img src="https://img.shields.io/badge/ChatGPT-GPT--6_Astra_|_GPT--6.1_Sol-10A37F?style=flat-square&logo=openai&logoColor=white" alt="ChatGPT">
-  <img src="https://img.shields.io/badge/DeepSeek-V4--Pro_(Think_Max)_|_V4.1--Flash-4D6BFE?style=flat-square" alt="DeepSeek">
-  <img src="https://img.shields.io/badge/Gemini-4_Argon_|_3.8_Flash_Thinking-4285F4?style=flat-square&logo=google&logoColor=white" alt="Gemini">
-  <img src="https://img.shields.io/badge/Google_AI_Studio-Gemini_4_Argon_|_3.1_Pro-EA4335?style=flat-square&logo=google" alt="AI Studio">
+  <img src="https://img.shields.io/badge/Claude-claude.ai-D97706?style=flat-square&logo=anthropic&logoColor=white" alt="Claude">
+  <img src="https://img.shields.io/badge/ChatGPT-chatgpt.com-10A37F?style=flat-square&logo=openai&logoColor=white" alt="ChatGPT">
+  <img src="https://img.shields.io/badge/DeepSeek-chat.deepseek.com-4D6BFE?style=flat-square" alt="DeepSeek">
+  <img src="https://img.shields.io/badge/Gemini-gemini.google.com-4285F4?style=flat-square&logo=google&logoColor=white" alt="Gemini">
+  <img src="https://img.shields.io/badge/Google_AI_Studio-aistudio.google.com-EA4335?style=flat-square&logo=google" alt="AI Studio">
 </p>
 
-[Quickstart (30s)](#quickstart-in-30-seconds) · [Why WebAI Bridge?](#why-webai-bridge) · [Frontier Models](#supported-frontier-models-november-2026-lineup) · [Architecture](#how-it-works) · [Security FAQ](#security-privacy--anti-ban-faq) · [Releases](https://github.com/GoulagmanYt/webai-bridge/releases/latest)
+[Quickstart](#quickstart) · [Why WebAI Bridge?](#why-webai-bridge) · [Supported Platforms](#supported-web-platforms) · [Architecture](#how-it-works) · [Testing & Coverage](#testing--verification-coverage) · [Security FAQ](#security-privacy--anti-ban-faq) · [Releases](https://github.com/GoulagmanYt/webai-bridge/releases/latest)
 
 </div>
 
@@ -32,15 +32,13 @@
 ## Why WebAI Bridge?
 
 ### The Double-Billing Trap
-As developers, we already pay **$20 to $40/month** for subscriptions like **Claude Pro**, **ChatGPT Plus**, or **Gemini Advanced**. 
+Developers often already maintain flat-rate or web access accounts on **Claude**, **ChatGPT**, **Gemini**, **Google AI Studio**, or **DeepSeek**, yet pay separately on per-token API meters inside IDE coding agents (Antigravity IDE, Cursor, Claude Code, Cline, Roo Code).
 
-Yet, when using coding agents inside editors (Antigravity IDE, Cursor, Claude Code, Cline, Roo Code), we are forced to **pay again on a per-token API meter** — burning $10 to $50+ on a single deep debugging session or architecture redesign.
-
-**WebAI Bridge eliminates this dilemma.** It lets your local IDE agent delegate the hard thinking to your logged-in web browser tab over the official **Model Context Protocol (MCP)**.
+**WebAI Bridge removes the extra API hop** when you want your local IDE agent to collaborate with your logged-in browser tab over the official **Model Context Protocol (MCP)**. Each platform's own subscription requirements, usage caps, and Terms of Service still apply.
 
 ### Fixed Two-Agent Architecture
-* **Executor (Local IDE Agent):** Runs in your editor. Gathers local context, invokes tests, inspects syntax, and applies code edits.
-* **Orchestrator (Browser Web AI):** Runs in your browser. Acts as the Chief Architect. Solves hard reasoning, plans multi-file structures, and crafts complete solutions.
+* **Executor (Local IDE Agent):** Runs in your editor. Gathers local context, applies inspected code edits, runs verification commands, and reports results.
+* **Orchestrator (Browser Web AI):** Runs in your browser tab. Performs architectural reasoning and emits structured `PATCH:` / `FILE:` proposals.
 
 ---
 
@@ -48,73 +46,44 @@ Yet, when using coding agents inside editors (Antigravity IDE, Cursor, Claude Co
 
 | Feature | Manual Copy-Paste | IDE Pay-Per-Token API | WebAI Bridge |
 |---|:---:|:---:|:---:|
-| **Token Cost** | $0 (included in sub) | **$10 – $100+ / week** | **$0 (uses your existing flat-rate sub)** |
-| **Project File Upload** | Tedious, manual, truncated | Automated, but paid per token | **Native browser DataTransfer / File API** |
-| **Context Management** | Painful manual re-pasting | Full re-read costs token fees | **Git-aware 60k delta tracking** |
-| **Secrets Protection** | High human error risk | Depends on client config | **Automatic firewall: refuses `.env` & credentials** |
-| **Code Application** | Copy-paste file-by-file | Auto-applied in editor | **Auto-applied to workspace + auto test runs** |
-| **Frontier Models** | Instant web availability | Wait for API access & pay tiers | **Instant Day-0 access to all latest models** |
+| **Bridge Metering Fee** | None (web UI only) | Billed per API token | **$0 bridge API fee (uses your web session; platform limits apply)** |
+| **Project File Upload** | Manual copy/paste | Automated via API | **Native browser DataTransfer / File API (`<= 2 MB` per file)** |
+| **Context Management** | Manual re-pasting | Re-sent per API call | **Turn-1 discovery cap (`18,000` chars default) + unified diffs & `git diff --stat`** |
+| **Secrets Protection** | Manual vigilance | Depends on client config | **Server file firewall: refuses `.env`, keys, and `.git/`** |
+| **Code Application** | Manual file edits | Applied in editor | **Agent-inspected `PATCH:`/`FILE:` edits in `projectRoot` + checks** |
+| **Model Switching** | Separate tabs manually | Requires API key / model access | **Switch active web tab between requests (subject to DOM selectors)** |
 
 ---
 
 ## Quick Demo
 
 ```
-[ IDE Split-Screen: Antigravity / Cursor ]              [ Browser Tab: Claude Opus 5.5 / GPT-6 Astra / DeepSeek V4-Pro ]
+[ IDE Split-Screen: Antigravity / Cursor ]              [ Browser Tab: Claude / ChatGPT / Gemini / DeepSeek ]
   1. User prompts: "Refactor auth system"
   2. IDE Agent invokes consult_orchestrator  -------->   3. Floating status pill turns Amber (Busy)
                                                         4. Project files natively attached (DataTransfer API)
                                                         5. .env & secret keys automatically blocked
-  7. Code applied & tests pass automatically <--------   6. Web AI outputs architecture & complete code files
+  7. Edits applied & checked autonomously  <--------   6. Web AI outputs PATCH:/FILE: proposals
 ```
 
-> **Result:** 0 Copy-Paste. $0 API Tokens. Pure Autonomous Orchestration.
+> **Result:** Native attachment uploads, server-side secret filtering, and structured diff/patch round-trips over local MCP.
 
 ---
 
-## Supported Frontier Models (November 2026 Lineup)
+## Supported Web Platforms
 
-WebAI Bridge connects directly to whatever model is selected in your open browser tab. In November 2026, the frontier AI landscape has unified around **multimodality, 1M+ token context windows, and adjustable Thinking tiers**. Because WebAI Bridge interacts with your real browser session, **any new model, reasoning level, or preview launched on these platforms is supported on Day 0 with zero extension updates:**
+WebAI Bridge connects to whatever model and thinking tier you currently have open in your browser tab, rather than hardcoding model API IDs. **New models or reasoning modes added to the existing chat interface work without extension updates, as long as the site's DOM selectors remain compatible** (major frontend redesigns may require selector updates in [`extension/content-providers.js`](extension/content-providers.js)).
 
-### 1. OpenAI — ChatGPT (`chatgpt.com`)
-OpenAI structures its web ecosystem around **GPT-6 & GPT-6.1** (unifying the former GPT-4o and o1/o3 lines) with an explicit Thinking selector (*Instant, Medium, High, Extra High*):
-* **GPT-6 Astra (and GPT-6 Pro / Astra Ultrafast):** Flagship model launched in September 2026. Dedicated to heavy reasoning, deep software architecture, and complex agentic refactoring.
-* **GPT-6.1 Sol (and GPT-6 Sol):** Default daily driver for paid accounts (Plus, Pro, Work, Codex), hyper-optimized for everyday coding and test execution.
-* **GPT-6.1 Terra:** Balanced intermediate model (ChatGPT Work & Codex) offering an optimal balance between execution speed and precision.
-* **GPT-6 Luna (and GPT-5.6 Luna):** Lightweight, high-speed engine serving as the default for free accounts.
-
-### 2. Anthropic — Claude (`claude.ai`)
-Anthropic powers claude.ai with **Claude 5.5** alongside its advanced research branch **Fable / Mythos**, all featuring 1M token context windows and **Adaptive Thinking**:
-* **Claude Opus 5.5:** Flagship model for autonomous agentic code generation and massive multi-file refactorings (included with Claude Pro).
-* **Claude Fable 5.1 (Mythos 5 class):** Frontier model positioned above Opus (on claude.ai & Max tier), engineered for complex scientific reasoning and long-horizon autonomous tasks.
-* **Claude Sonnet 5.5:** Versatile default daily workhorse, 30% faster than Sonnet 5 for full-stack engineering.
-* **Claude Haiku 5.5:** Compact, ultra-low-latency model tailored for subagents and high-volume background tasks.
-
-### 3. Google — Gemini (`gemini.google.com`) & Google AI Studio (`aistudio.google.com`)
-Google transitions to **Gemini 4**, with **Flash 3.8** acting as its core agentic powerhouse:
-* **Gemini 4 Argon (`gemini-4-argon`):** New flagship reasoning model (deployed October 2026 on Gemini Pro/Ultra, AI Studio, and Antigravity) specialized in complex software engineering.
-* **Gemini 3.8 Flash (`gemini-3.8-flash` & `3.8 Live Extended Thinking`):** Default Agentic Flash model in AI Studio (superseding 3.5/3.7 Flash), blisteringly fast on code synthesis.
-* **Gemini 3.1 Pro Preview (with Deep Think):** Tailored for dense data analysis, mathematics, and Deep Research Max.
-* **Gemini 3.5 Flash-Lite (and 3.1 Flash-Lite):** High-throughput lightweight tier for secondary validation.
-
-### 4. DeepSeek — DeepSeek Chat (`chat.deepseek.com`)
-DeepSeek has unified its architecture into the **DeepSeek V4 / V4.1** generation (1M tokens context, 100% free on web chat):
-* **DeepSeek V4.1-Flash:** 552B MoE native multimodal model (text & vision) featuring the **DeepThink** button, outperforming V4-Pro on agent benchmarks.
-* **DeepSeek V4-Pro:** 1.6T parameter heavy reasoning model with 3 selectable thinking levels (*Non-Think, Think High, Think Max*).
-
----
-
-### Frontier Web Models Matrix
-
-| Web Platform | Reasoning / Flagship Model | Daily Coding Model | Fast / Lightweight Model | Max Context |
-|---|---|---|---|:---:|
-| **Claude** | Claude Opus 5.5 / Fable 5.1 | Claude Sonnet 5.5 | Claude Haiku 5.5 | **1M tokens** |
-| **Gemini & AI Studio** | Gemini 4 Argon / 3.1 Pro | Gemini 3.8 Flash | Gemini 3.5 Flash-Lite | **1M tokens** |
-| **ChatGPT** | GPT-6 Astra / GPT-6 Pro | GPT-6.1 Sol / Terra | GPT-6 Luna | **1.05M tokens** |
-| **DeepSeek** | DeepSeek V4-Pro (Think Max) | DeepSeek V4.1-Flash | DeepSeek V4.1-Flash | **1M tokens** |
+| Web Platform | Hostname (`manifest.json`) | Notes |
+|---|---|---|
+| **OpenAI ChatGPT** | `chatgpt.com` | Supports whatever ChatGPT model/thinking tier your session has active. |
+| **Anthropic Claude** | `claude.ai` | Assistant response extraction + composer-scoped upload chip delta checks. |
+| **Google Gemini** | `gemini.google.com` | Supports Quill/rich-textarea injection and excluded `<user-query>` echo filtering. |
+| **Google AI Studio** | `aistudio.google.com` | Direct browser tab integration under the Google Gemini / AI Studio web UI. |
+| **DeepSeek Chat** | `chat.deepseek.com` | Hash-free selectors and DeepThink reasoning container filtering. |
 
 > [!TIP]
-> **Switch brains mid-task in 1 second:** Open tabs for Claude Opus 5.5, GPT-6 Astra, and DeepSeek V4-Pro. Click the floating button on whichever tab you want active — it turns **Green** instantly. No IDE restarts or config file changes needed!
+> **Switch platforms between requests:** Open tabs for different providers (for example Claude, ChatGPT, and Gemini) and click the Obsidian Signal floating pill on whichever tab should take over next — it turns **Emerald (`Bridge · Live`)** once connected. *(Pill clicks are locked while a request is `Busy`.)*
 
 ---
 
@@ -122,31 +91,35 @@ DeepSeek has unified its architecture into the **DeepSeek V4 / V4.1** generation
 
 ```mermaid
 flowchart LR
-    subgraph Local["Local Machine (Trusted Boundary)"]
+    subgraph Local["Local Machine"]
         IDE["IDE Agent (Executor)<br/>Antigravity · Cursor · Claude Code"]
-        MCP["Local MCP Server<br/>ws://localhost:4545<br/>Firewalls .env · 60k Git Delta Budget"]
+        MCP["Local MCP Server<br/>ws://127.0.0.1:4545<br/>Firewalls .env · 18,000-char context cap · Unified Diffs"]
     end
 
-    subgraph Browser["Chrome Browser (Flat-Rate Subscriptions)"]
-        EXT["WebAI Bridge Extension<br/>Native DataTransfer & File API"]
-        WEB["Web AI Tab (Orchestrator)<br/>Claude · ChatGPT · DeepSeek · Gemini"]
+    subgraph Browser["Chrome Browser (User Web Sessions)"]
+        EXT["WebAI Bridge Extension<br/>Shadow-DOM Pill · DataTransfer & File API"]
+        WEB["Web AI Tab (Orchestrator)<br/>Claude · ChatGPT · DeepSeek · Gemini · AI Studio"]
     end
 
     IDE -- "1. consult_orchestrator" --> MCP
     MCP -- "2. Filtered context + project files" --> EXT
     EXT -- "3. Native file attachments" --> WEB
-    WEB -. "4. Architecture & complete code" .-> EXT
+    WEB -. "4. Architecture & PATCH:/FILE: edits" .-> EXT
     EXT -. "5. Streamed answer captured" .-> MCP
-    MCP -. "6. Patch workspace files & run tests" .-> IDE
+    MCP -. "6. Agent inspects, patches & verifies" .-> IDE
 ```
 
 ---
 
-## Quickstart in 30 Seconds
+## Quickstart
+
+### Prerequisites
+- **Node.js `>= 18`** (required to run `extension/bridge.mjs`, including when using the release ZIP)
+- **Google Chrome** (or another Chromium browser supporting Manifest V3 unpacked extensions)
 
 ### Step 1: Get the Package
 Download `webai-bridge.zip` from the [latest release](https://github.com/GoulagmanYt/webai-bridge/releases/latest) and unzip it into a permanent folder (e.g. `D:/webai-bridge` or `~/webai-bridge`).  
-*(The release bundle already includes pre-built dependencies, no terminal build needed).*
+*(The release archive includes pre-installed `node_modules`, `extension/`, `skills/`, `package.json`, and `package-lock.json`, so no `npm install` step is needed.)*
 
 <details>
 <summary>Or clone from source</summary>
@@ -244,7 +217,7 @@ Add to `cline_mcp_settings.json`:
 
 ### Step 4: Install the Autonomous Orchestrator Skill (Recommended)
 
-To guarantee that your IDE agent operates in a **100% autonomous, unbroken closed loop** (applying code, executing tests, reporting results back to the web orchestrator, never interrupting the human, and looping until `TASK_COMPLETE`):
+To keep your IDE agent operating in a **closed autonomous loop** (inspecting returned edits/commands for safety, applying changes inside `projectRoot`, running verification checks, looping while `loop=continue`, and yielding to you on standalone `TASK_COMPLETE` or a physical blocker such as `NO_TAB` / `NO_INPUT` / `GENERATION_NOT_STARTED`):
 
 #### Automatic Installation (One command)
 Run from your installation folder:
@@ -289,6 +262,8 @@ Copy the bundled `skills/webai-orchestrator` folder into your agent's skills loc
 | **Slate** | **`Bridge · Standby`** | Tab paused intentionally; click the pill once to claim and connect. |
 | **Rose** | **`Bridge · Replaced` / `Offline`** | Another tab claimed the bridge or server is unreachable; click to reconnect. |
 
+Click the **WebAI Bridge extension icon** in Chrome's toolbar to open the **Obsidian Signal Popup**: view live active-tab telemetry (`Provider`, `Tab Mode`, `Upload State`, `Active Job`), change WebSocket port or optional Session Auth Token (with reveal toggle and `Enter`-to-save), toggle **Debug Mode**, and copy/clear the runtime log buffer.
+
 > [!TIP]
 > **Need a clean slate?** Open a **New Chat** in the web tab. WebAI Bridge automatically detects new conversations and sends fresh context bundles!
 
@@ -332,13 +307,36 @@ FILE: /path/to/project/src/new-helper.ts
 
 | Error Code | Description | Automated Recovery Action |
 |---|---|---|
-| `NO_TAB` | No browser tab dedicated. | Prompt user to open supported AI tab and click the button until green. |
+| `NO_TAB` | No browser tab dedicated. | Ask the user to open a supported AI tab and click the floating pill until it shows Emerald (`Bridge · Live`). |
 | `NO_INPUT` | Chat textarea not found. | Open a fresh new chat in the browser tab. |
 | `TAB_DISCONNECTED` | Tab closed mid-request. | Check status and retry once. |
 | `TIMEOUT` | Generation deadline exceeded. | Resumes stream automatically via `jobId` or retry with smaller task. |
 | `UPLOAD_FAILED` | File attachment failed. | Clear textarea, retry once with clean state. |
 | `GENERATION_NOT_STARTED`| Blocked by captcha, rate limit or upload spinner. | Prompt user to inspect the browser tab. |
 | `BAD_REQUEST` | Arguments validation failed. | Fix parameters according to schema. |
+
+---
+
+## Testing & Verification Coverage
+
+All automated checks run in **Node.js `>= 18`**:
+- **GitHub Actions CI** ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)): runs `npm ci`, `npm test`, and `npm run audit`.
+- **Standalone local harness** (`node test/live-integration.mjs`): run manually/locally outside CI.
+
+| Command | Scope & Count | Environment / What It Verifies |
+|---|---|---|
+| `npm run check` | `10` scripts + `manifest.json` | Syntax validation (`node --check`) across all `.mjs`/`.js` extension modules and valid Manifest V3 JSON. |
+| `npm run test:unit` | `72` tests (`6` files) | Native `node --test` suite across [`test/safety.test.mjs`](test/safety.test.mjs) (`10`, `1` conditional skip on unprivileged Windows symlinks), [`test/protocol.test.mjs`](test/protocol.test.mjs) (`13`), [`test/protocol.e2e.test.mjs`](test/protocol.e2e.test.mjs) (`20`), [`test/comparison.test.mjs`](test/comparison.test.mjs) (`12`), [`test/milestone4.test.mjs`](test/milestone4.test.mjs) (`10`), and [`test/patch-delta.test.mjs`](test/patch-delta.test.mjs) (`7`). |
+| `npm run doctor` | `36` checks | Static & contract checks in [`scripts/doctor.mjs`](scripts/doctor.mjs): required files, MV3 script order, canonical port `4545`, filename sanitization, protocol/patch helpers, upload vectors, and Obsidian Signal UI exports. |
+| `npm test` | Core test suite | Runs `npm run check && npm run test:unit && npm run doctor`. |
+| `npm run audit` | Dependency security | Runs `npm audit --audit-level=moderate`. |
+| `node test/live-integration.mjs` | `8` E2E steps *(local only, not in CI)* | Spawns real `extension/bridge.mjs` (`port 4546`) with simulated MCP stdio & WebSocket peers to verify origin rejection, auth handshake, canonical tools, `consult_orchestrator`, legacy alias compatibility, and disconnect resilience. |
+
+> [!NOTE]
+> **Coverage Scope & Boundaries:**
+> - **Headless unit & contract suites (`safety.test.mjs`, `protocol.test.mjs`, `comparison.test.mjs`, `milestone4.test.mjs`, `patch-delta.test.mjs`, `doctor.mjs`):** Run in Node.js using mocked DOM / Shadow DOM elements and mocked `chrome.*` APIs (`storage`, `tabs`, `runtime`).
+> - **Local MCP & WebSocket harnesses (`protocol.e2e.test.mjs`, `live-integration.mjs`):** Spawn the real `extension/bridge.mjs` MCP stdio + WebSocket server locally against simulated MCP and WebSocket browser peers (no live Chrome process or real AI site is driven).
+> - **Not covered by headless CI:** Real Chrome extension loading, live Obsidian Signal popup & Shadow-DOM floating pill layout/interactions, Chromium `chrome.*` IPC, and live selector compatibility against third-party AI web apps require manual verification in Chrome after reloading the unpacked extension.
 
 ---
 
@@ -349,8 +347,8 @@ Port priority: CLI `--port <number>` (or `--port=<number>`) -> `WEBAI_BRIDGE_POR
 | Environment Variable | Default | Purpose |
 |---|:---:|---|
 | `WEBAI_BRIDGE_PORT` / `BRIDGE_PORT` | `4545` | Port for the local WebSocket bridge (`1024`–`65535`). `ANTIGRAVITY_BRIDGE_PORT` is also supported for legacy setups. |
-| `WEBAI_BRIDGE_TOKEN` | *auto-generated* | Fixed session token for WebSocket authentication (enables strict token enforcement; active session metadata is stored in `~/.webai-bridge/session.json` with `0600` permissions). |
-| `WEBAI_BRIDGE_STRICT_AUTH` | *none* | Set to `1` to require the per-session token from `~/.webai-bridge/session.json` on every WebSocket connection. |
+| `WEBAI_BRIDGE_TOKEN` | *auto-generated* | Fixed session token for WebSocket authentication (enables strict token enforcement; active session metadata is stored in `~/.webai-bridge/session.json` with POSIX `0600` permissions — best-effort on Windows). |
+| `WEBAI_BRIDGE_STRICT_AUTH` | *unset (`false`)* | Set to `1` to enforce the auto-generated token from `~/.webai-bridge/session.json` on every WebSocket upgrade (when both this and `WEBAI_BRIDGE_TOKEN` are unset, CSWSH `Origin` checks and per-session handshakes remain active without rejecting tokenless local tabs). |
 | `BRIDGE_EXTRA_ROOTS` | *none* | Additional allowed directories for file uploads (separated by `;` on Windows, `:` elsewhere). |
 | `BRIDGE_INSTALL_RULE` | *none* | Set to `1` to automatically install the agent protocol into `~/.gemini/GEMINI.md`. |
 | `BRIDGE_SHOW_LEGACY_TOOLS` | *none* | Set to `1` to include deprecated alias tools in `tools/list` (hidden by default to save IDE agent tokens; aliases still work at runtime). `BRIDGE_HIDE_LEGACY_TOOLS=1` remains supported as an override. |
@@ -362,20 +360,20 @@ Port priority: CLI `--port <number>` (or `--port=<number>`) -> `WEBAI_BRIDGE_POR
 
 ## Security, Privacy & Anti-Ban FAQ
 
-### Can my Claude / ChatGPT / Gemini account get banned?
-**No.** WebAI Bridge does not use reverse-engineered endpoints, private auth tokens, or headless scrapers (Puppeteer/Playwright) which Cloudflare flags. It operates as an extension inside your authentic, everyday browser session at a normal human pace (a few architectural queries per hour).
+### Can using a Web AI bridge trigger account restrictions?
+WebAI Bridge avoids private undocumented APIs, credential harvesting, and headless browser automation (Puppeteer/Playwright) that anti-bot systems target. It runs inside your own logged-in Chrome tab at interactive developer cadence; however, all usage remains subject to each platform's rate limits and Terms of Service.
 
 ### Can my `.env` files or secret keys leak?
-**Never.** The MCP server enforces a strict local file firewall:
-- Only files located inside `projectRoot` are accepted.
-- Any sensitive file matching `.env`, private keys, SSH credentials, tokens, or VCS internals (`.git/`) is **strictly refused and reported** under `[refused]`.
-- Individual files over 2 MB are rejected to prevent context pollution.
+**Blocked by the server file firewall.** Before reading any attachment:
+- Only files inside `projectRoot` (plus explicitly configured `BRIDGE_EXTRA_ROOTS`, with symlinks resolved) are accepted.
+- Sensitive paths matching `.env`, private keys, SSH credentials, tokens, or VCS internals (`.git/`) are **refused and listed** under `[refused]`.
+- Individual files larger than `2 MB` are rejected to avoid oversized uploads.
 
 ### Can the Web AI execute destructive shell commands on my machine?
-**Blocked by protocol and workspace boundaries.** The Orchestrator's reply is treated as an untrusted proposal. The Executor inspects proposed code and commands for safety before applying file changes inside `projectRoot` or running routine project build/test verification; destructive shell commands and unreviewed package installations are not executed without explicit consent.
+**Enforced for file access on disk; policy-driven in the IDE agent.** WebAI Bridge never executes shell commands on its own and treats Orchestrator output as untrusted text proposals. While the server strictly enforces the file-upload firewall inside `projectRoot` / `BRIDGE_EXTRA_ROOTS`, inspecting returned edits and preventing unsafe shell commands or unreviewed dependency installs depends on the connected **IDE agent** following the MCP instructions (WebAI Bridge is not an OS process sandbox).
 
 ### Does any data pass through third-party servers?
-**Zero.** Communication between your IDE and Chrome occurs 100% locally on `ws://127.0.0.1:4545` (validated by WebSocket `Origin` checks and optional per-session token auth). No intermediary cloud service or telemetry tracker exists.
+Bridge communication between your IDE and Chrome extension stays strictly local on `ws://127.0.0.1:4545` (guarded by WebSocket `Origin` validation and optional per-session token auth), with no telemetry or intermediary cloud proxy. Prompts and files you choose to dispatch are processed directly by the AI web platform open in your dedicated tab under that provider's privacy terms.
 
 ---
 
