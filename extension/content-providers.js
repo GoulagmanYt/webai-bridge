@@ -547,10 +547,14 @@
       uploadBusySelectors: [
         'form [role="progressbar"]',
         'form svg.animate-spin',
+        'form [aria-busy="true"]',
         '[data-testid*="attachment"] [role="progressbar"]',
         '[data-testid*="attachment"] svg.animate-spin',
+        '[data-testid*="attachment"][aria-busy="true"]',
+        '[data-testid*="file-thumbnail"] [role="progressbar"]',
         '.group.relative.inline-block [role="progressbar"]',
-        '.group.relative.inline-block svg.animate-spin'
+        '.group.relative.inline-block svg.animate-spin',
+        'form .group.relative.inline-block circle[stroke-dasharray]'
       ],
       artifactCleanupSelectors: [
         'button[aria-label*="Copy" i]',

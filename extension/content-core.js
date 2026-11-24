@@ -322,7 +322,7 @@
    */
   async function triggerSend(provider, inputEl, options = {}) {
     const logger = options.logger || ((_c, _l, _m, _d) => {});
-    const maxWaitMs = options.hasFiles ? 15000 : 6000;
+    const maxWaitMs = options.hasFiles ? 25000 : 6000;
     const deadline = Date.now() + maxWaitMs;
     logger('SEND', 'debug', 'triggerSend loop initialized', { maxWaitMs, hasFiles: Boolean(options.hasFiles) });
 
@@ -331,6 +331,9 @@
     let ticks = 0;
     while (Date.now() < deadline) {
       ticks++;
+      const uploadBusy = options.hasFiles && Upload && typeof Upload.isComposerUploadBusy === 'function'
+        ? Upload.isComposerUploadBusy(provider, Upload.resolveComposerContainer(provider))
+        : false;
       const candidate = Providers.findSendButton(provider, inputEl);
       if (candidate) {
         anyCandidate = candidate;
@@ -341,12 +344,13 @@
             tag: candidate.tagName,
             classes: Array.from(candidate.classList || []).join(' '),
             disabled,
+            uploadBusy,
             display: style?.display,
             visibility: style?.visibility,
             opacity: style?.opacity
           });
         }
-        if (!disabled) {
+        if (!disabled && !uploadBusy) {
           if (!style || (style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) > 0.2)) {
             sendBtn = candidate;
             logger('SEND', 'info', 'Active send button verified and enabled', {
@@ -360,8 +364,12 @@
       await sleep(150);
     }
 
-    // Follow-up fallback: If candidate exists but aria-disabled is lingering, and the input has content, force enable & click!
-    if (!sendBtn && anyCandidate) {
+    // Follow-up fallback: If candidate exists but aria-disabled is lingering, and input has content
+    // (only when upload spinners are no longer active), force enable & click
+    const stillUploading = options.hasFiles && Upload && typeof Upload.isComposerUploadBusy === 'function'
+      ? Upload.isComposerUploadBusy(provider, Upload.resolveComposerContainer(provider))
+      : false;
+    if (!sendBtn && anyCandidate && !stillUploading) {
       const hasContent = (inputEl && (inputEl.value || inputEl.textContent || inputEl.innerText || '').trim().length > 0);
       logger('SEND', 'warn', 'Send button remained disabled after polling timeout, checking force-enable fallback', {
         hasContent,

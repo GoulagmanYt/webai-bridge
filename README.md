@@ -326,7 +326,7 @@ All automated checks run in **Node.js `>= 18`**:
 | Command | Scope & Count | Environment / What It Verifies |
 |---|---|---|
 | `npm run check` | `10` scripts + `manifest.json` | Syntax validation (`node --check`) across all `.mjs`/`.js` extension modules and valid Manifest V3 JSON. |
-| `npm run test:unit` | `72` tests (`6` files) | Native `node --test` suite across [`test/safety.test.mjs`](test/safety.test.mjs) (`10`, `1` conditional skip on unprivileged Windows symlinks), [`test/protocol.test.mjs`](test/protocol.test.mjs) (`13`), [`test/protocol.e2e.test.mjs`](test/protocol.e2e.test.mjs) (`20`), [`test/comparison.test.mjs`](test/comparison.test.mjs) (`12`), [`test/milestone4.test.mjs`](test/milestone4.test.mjs) (`10`), and [`test/patch-delta.test.mjs`](test/patch-delta.test.mjs) (`7`). |
+| `npm run test:unit` | `73` tests (`6` files) | Native `node --test` suite across [`test/safety.test.mjs`](test/safety.test.mjs) (`10`, `1` conditional skip on unprivileged Windows symlinks), [`test/protocol.test.mjs`](test/protocol.test.mjs) (`13`), [`test/protocol.e2e.test.mjs`](test/protocol.e2e.test.mjs) (`20`), [`test/comparison.test.mjs`](test/comparison.test.mjs) (`12`), [`test/milestone4.test.mjs`](test/milestone4.test.mjs) (`11`), and [`test/patch-delta.test.mjs`](test/patch-delta.test.mjs) (`7`). |
 | `npm run doctor` | `36` checks | Static & contract checks in [`scripts/doctor.mjs`](scripts/doctor.mjs): required files, MV3 script order, canonical port `4545`, filename sanitization, protocol/patch helpers, upload vectors, and Obsidian Signal UI exports. |
 | `npm test` | Core test suite | Runs `npm run check && npm run test:unit && npm run doctor`. |
 | `npm run audit` | Dependency security | Runs `npm audit --audit-level=moderate`. |

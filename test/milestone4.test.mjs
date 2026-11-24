@@ -859,3 +859,273 @@ test('Milestone 4.10 - Obsidian Signal popup states, FloatingBridgePill lifecycl
     else globalThis.localStorage = savedLocalStorage;
   }
 });
+
+test('Milestone 4.11 - Slow multi-file upload extends verification while busy and never double-injects duplicates', async () => {
+  const savedDocument = globalThis.document;
+  const savedWindow = globalThis.window;
+  const savedDataTransfer = globalThis.DataTransfer;
+  const savedEvent = globalThis.Event;
+
+  class MockDataTransfer {
+    constructor() {
+      const itemsList = [];
+      this.files = itemsList;
+      this.items = { add: (f) => itemsList.push(f) };
+    }
+  }
+  class MockEvent {
+    constructor(type, init = {}) {
+      this.type = type;
+      Object.assign(this, init);
+    }
+  }
+  const makeEl = (props = {}) => ({
+    tagName: 'DIV',
+    style: {},
+    files: [],
+    value: '',
+    innerText: '',
+    textContent: '',
+    children: [],
+    getAttribute: () => null,
+    hasAttribute: () => false,
+    getBoundingClientRect: () => ({ width: 20, height: 20 }),
+    contains(other) {
+      if (other === this) return true;
+      return this.children.some((c) => typeof c.contains === 'function' && c.contains(other));
+    },
+    closest: () => null,
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    dispatchEvent: () => true,
+    ...props
+  });
+
+  try {
+    globalThis.DataTransfer = MockDataTransfer;
+    globalThis.Event = MockEvent;
+    globalThis.window = {
+      getComputedStyle: () => ({ display: 'block', visibility: 'visible', opacity: '1' })
+    };
+
+    // Scenario A: React clears input.files immediately on change and spinner remains busy past verifyTimeoutMs (180ms -> finishes at 260ms).
+    // Parent card contains nested Remove button; filterTopLevelElements must collapse both into 1 chip per file.
+    let uploadInjectCount = 0;
+    let spinnerActive = false;
+    const spinnerEl = makeEl({ id: 'gpt-progress' });
+    const composerChips = [];
+
+    const reactFileInput = makeEl({
+      files: [],
+      dispatchEvent(evt) {
+        if (evt.type === 'change') {
+          uploadInjectCount++;
+          spinnerActive = true;
+          const card1 = makeEl({ id: 'card-1', children: [makeEl({ id: 'remove-1' })] });
+          const card2 = makeEl({ id: 'card-2', children: [makeEl({ id: 'remove-2' })] });
+          // Push both parent cards AND their nested remove buttons to ensure top-level dedup works
+          composerChips.push(card1, card1.children[0], card2, card2.children[0]);
+          setTimeout(() => {
+            spinnerActive = false;
+          }, 260);
+          // React clears input.files immediately after processing change event
+          this.files = [];
+        }
+        return true;
+      }
+    });
+
+    const isBusySel = (sel) =>
+      sel.includes('progressbar') ||
+      sel.includes('animate-spin') ||
+      sel.includes('aria-busy') ||
+      sel.includes('stroke-dasharray');
+
+    const slowComposer = makeEl({
+      innerText: '',
+      querySelectorAll(sel) {
+        if (isBusySel(sel)) {
+          return spinnerActive ? [spinnerEl] : [];
+        }
+        if (sel.includes('attachment') || sel.includes('Remove')) {
+          return composerChips;
+        }
+        return [];
+      }
+    });
+    const slowEditor = makeEl({
+      parentElement: makeEl({ closest: () => slowComposer })
+    });
+
+    globalThis.document = {
+      body: makeEl(),
+      documentElement: makeEl(),
+      querySelector: (sel) => (sel.includes('input[type="file"]') ? reactFileInput : null),
+      querySelectorAll(sel) {
+        if (sel.includes('input[type="file"]')) return [reactFileInput];
+        if (sel.includes('prompt-textarea') || sel.includes('contenteditable')) return [slowEditor];
+        if (isBusySel(sel)) return spinnerActive ? [spinnerEl] : [];
+        if (sel.includes('attachment') || sel.includes('Remove')) return composerChips;
+        return [];
+      }
+    };
+
+    const smSlow = new UploadMod.UploadStateMachine({
+      verifyTimeoutMs: 180,
+      chipSettleMs: 10,
+      maxRetries: 2
+    });
+    const slowRes = await smSlow.executeUpload(
+      [
+        { name: 'README.md', content: 'doc1', encoding: 'utf8' },
+        { name: 'CHANGELOG.md', content: 'doc2', encoding: 'utf8' }
+      ],
+      ProvidersMod.PROVIDERS.chatgpt
+    );
+    assert.equal(uploadInjectCount, 1, 'Must NOT re-inject batch when spinner is actively uploading past base verifyTimeoutMs');
+    assert.equal(slowRes.attempts, 1);
+    assert.equal(slowRes.state, UploadMod.UPLOAD_STATES.READY);
+
+    // Verify nested remove buttons inside parent card collapse cleanly
+    const deduped = UploadMod.filterTopLevelElements(composerChips);
+    assert.equal(deduped.length, 2, 'Nested remove buttons inside attachment cards must collapse to 2 top-level chips');
+
+    // Scenario B: If Attempt 1 times out completely (hard cap reached while 1 partial chip appeared with spinner gone),
+    // retry Attempt 2 must NOT re-inject the batch on top of existing composer chips!
+    let partialInjectCount = 0;
+    const partialCard = makeEl({ id: 'partial-only-card' });
+    const partialInput = makeEl({
+      files: [],
+      dispatchEvent(evt) {
+        if (evt.type === 'change') {
+          partialInjectCount++;
+          partialInput.files = [];
+        }
+        return true;
+      }
+    });
+    let showPartial = false;
+    const retryComposer = makeEl({
+      innerText: '',
+      querySelectorAll(sel) {
+        if (isBusySel(sel)) return [];
+        if (sel.includes('attachment') || sel.includes('Remove')) {
+          return showPartial ? [partialCard] : [];
+        }
+        return [];
+      }
+    });
+    const retryEditor = makeEl({
+      parentElement: makeEl({ closest: () => retryComposer })
+    });
+    globalThis.document = {
+      body: makeEl(),
+      documentElement: makeEl(),
+      querySelector: (sel) => (sel.includes('input[type="file"]') ? partialInput : null),
+      querySelectorAll(sel) {
+        if (sel.includes('input[type="file"]')) return [partialInput];
+        if (sel.includes('prompt-textarea') || sel.includes('contenteditable')) return [retryEditor];
+        if (isBusySel(sel)) return [];
+        if (sel.includes('attachment') || sel.includes('Remove')) return showPartial ? [partialCard] : [];
+        return [];
+      }
+    };
+
+    const smPartial = new UploadMod.UploadStateMachine({
+      verifyTimeoutMs: 60,
+      chipSettleMs: 10,
+      maxRetries: 1
+    });
+    const baseline = smPartial.captureBaseline(ProvidersMod.PROVIDERS.chatgpt);
+    // Simulate Attempt 1 injected and left 1 chip behind
+    partialInjectCount = 1;
+    showPartial = true;
+    assert.equal(
+      UploadMod.hasComposerUploadActivity(ProvidersMod.PROVIDERS.chatgpt, baseline, [{ name: 'a.md' }, { name: 'b.md' }]),
+      true
+    );
+    // Running executeUpload where baseline already captures no chip first, then chip appears on change:
+    showPartial = false;
+    partialInjectCount = 0;
+    partialInput.dispatchEvent = (evt) => {
+      if (evt.type === 'change') {
+        partialInjectCount++;
+        showPartial = true;
+        partialInput.files = [];
+      }
+      return true;
+    };
+    const partialRes = await smPartial.executeUpload(
+      [{ name: 'a.md', content: '1', encoding: 'utf8' }, { name: 'b.md', content: '2', encoding: 'utf8' }],
+      ProvidersMod.PROVIDERS.chatgpt
+    );
+    assert.equal(partialInjectCount, 1, 'Attempt 2 must NEVER re-inject duplicate batch when chips already exist beyond baseline');
+    assert.equal(partialRes.state, UploadMod.UPLOAD_STATES.READY);
+
+    // Scenario C: Spinner exceeds Attempt 1 hardCapMs (verifyTimeoutMs: 50 -> hardCap 150ms; clears at 210ms)
+    // Attempt 2 must skip injectIntoDOM, stay valid in VERIFYING_DOM without ERR_INVALID_UPLOAD_TRANSITION, and resolve READY.
+    let retrySlowInjectCount = 0;
+    let slowRetrySpinner = false;
+    const retrySlowCard = makeEl({ id: 'slow-retry-card' });
+    const retrySlowCards = [];
+    const retrySlowInput = makeEl({
+      files: [],
+      dispatchEvent(evt) {
+        if (evt.type === 'change') {
+          retrySlowInjectCount++;
+          slowRetrySpinner = true;
+          retrySlowCards.push(retrySlowCard);
+          setTimeout(() => {
+            slowRetrySpinner = false;
+          }, 210);
+          this.files = [];
+        }
+        return true;
+      }
+    });
+    const retrySlowComposer = makeEl({
+      innerText: '',
+      querySelectorAll(sel) {
+        if (isBusySel(sel)) return slowRetrySpinner ? [makeEl({ id: 'spin' })] : [];
+        if (sel.includes('attachment') || sel.includes('Remove')) return retrySlowCards;
+        return [];
+      }
+    });
+    const retrySlowEditor = makeEl({
+      parentElement: makeEl({ closest: () => retrySlowComposer })
+    });
+    globalThis.document = {
+      body: makeEl(),
+      documentElement: makeEl(),
+      querySelector: (sel) => (sel.includes('input[type="file"]') ? retrySlowInput : null),
+      querySelectorAll(sel) {
+        if (sel.includes('input[type="file"]')) return [retrySlowInput];
+        if (sel.includes('prompt-textarea') || sel.includes('contenteditable')) return [retrySlowEditor];
+        if (isBusySel(sel)) return slowRetrySpinner ? [makeEl({ id: 'spin' })] : [];
+        if (sel.includes('attachment') || sel.includes('Remove')) return retrySlowCards;
+        return [];
+      }
+    };
+    const smHardTimeoutRetry = new UploadMod.UploadStateMachine({
+      verifyTimeoutMs: 50,
+      chipSettleMs: 10,
+      maxRetries: 2
+    });
+    const slowRetryRes = await smHardTimeoutRetry.executeUpload(
+      [{ name: 'slow.md', content: 'x', encoding: 'utf8' }],
+      ProvidersMod.PROVIDERS.chatgpt
+    );
+    assert.equal(retrySlowInjectCount, 1, 'Retry after hard timeout must skip re-injection when composer shows active upload');
+    assert.equal(slowRetryRes.attempts, 2);
+    assert.equal(slowRetryRes.state, UploadMod.UPLOAD_STATES.READY);
+  } finally {
+    if (savedDocument === undefined) delete globalThis.document;
+    else globalThis.document = savedDocument;
+    if (savedWindow === undefined) delete globalThis.window;
+    else globalThis.window = savedWindow;
+    if (savedDataTransfer === undefined) delete globalThis.DataTransfer;
+    else globalThis.DataTransfer = savedDataTransfer;
+    if (savedEvent === undefined) delete globalThis.Event;
+    else globalThis.Event = savedEvent;
+  }
+});

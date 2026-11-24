@@ -165,6 +165,75 @@
   }
 
   /**
+   * Collapses matched elements so nested children (e.g. a remove button inside an attachment card)
+   * are not counted separately from their already-matched parent chip.
+   * @param {Element[]} elements
+   * @returns {Element[]}
+   */
+  function filterTopLevelElements(elements) {
+    if (!Array.isArray(elements) || elements.length <= 1) return Array.isArray(elements) ? elements : [];
+    return elements.filter((el) => !elements.some((other) => (
+      other !== el &&
+      other &&
+      typeof other.contains === 'function' &&
+      other.contains(el)
+    )));
+  }
+
+  function isElementVisuallyRendered(el) {
+    if (!el) return false;
+    try {
+      const style = typeof window !== 'undefined' && window.getComputedStyle ? window.getComputedStyle(el) : null;
+      if (style && (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0)) {
+        return false;
+      }
+    } catch (_) {}
+    if (typeof el.getBoundingClientRect === 'function') {
+      const rect = el.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    }
+    return false;
+  }
+
+  function isComposerUploadBusy(provider, composerRoot) {
+    if (typeof document === 'undefined') return false;
+    const busySelectors = (provider && provider.uploadBusySelectors) || [];
+    if (busySelectors.length === 0) return false;
+    const matches = collectMatchingElements(busySelectors, composerRoot || document, {
+      requireVisible: false,
+      excludeHistory: true
+    });
+    return matches.some((el) => isElementVisuallyRendered(el));
+  }
+
+  function hasComposerUploadActivity(provider, baseline, fileObjects = []) {
+    if (typeof document === 'undefined') return false;
+    const composerRoot = resolveComposerContainer(provider) || (baseline && baseline.composerRoot) || null;
+    if (isComposerUploadBusy(provider, composerRoot)) return true;
+
+    const chipSelectors = (provider && provider.attachmentChipSelectors) || [];
+    const existingChips = baseline && baseline.existingChips instanceof Set ? baseline.existingChips : new Set();
+    if (chipSelectors.length > 0) {
+      const currentChips = filterTopLevelElements(collectMatchingElements(chipSelectors, composerRoot || document, {
+        requireVisible: false,
+        excludeHistory: true
+      }));
+      if (currentChips.some((el) => !existingChips.has(el))) {
+        return true;
+      }
+    }
+
+    const baselineText = baseline && typeof baseline.baselineComposerText === 'string' ? baseline.baselineComposerText : '';
+    if (composerRoot && Array.isArray(fileObjects) && fileObjects.length > 0) {
+      const composerText = composerRoot.innerText || composerRoot.textContent || '';
+      if (composerText && composerText !== baselineText) {
+        return fileObjects.some((f) => f && f.name && composerText.includes(f.name) && !baselineText.includes(f.name));
+      }
+    }
+    return false;
+  }
+
+  /**
    * Checks whether an <input type="file">'s FileList exactly matches the target fileObjects batch.
    * @param {FileList|Array|null} existingFiles
    * @param {Array<File|object>} targetFiles
@@ -251,6 +320,7 @@
       this.maxFileBytes = options.maxFileBytes || DEFAULT_MAX_FILE_BYTES;
       this.maxRetries = typeof options.maxRetries === 'number' ? options.maxRetries : 2;
       this.verifyTimeoutMs = options.verifyTimeoutMs || 8000;
+      this._hasCustomVerifyTimeout = typeof options.verifyTimeoutMs === 'number';
       this.lazyInputTimeoutMs =
         typeof options.lazyInputTimeoutMs === 'number' ? options.lazyInputTimeoutMs : DEFAULT_LAZY_INPUT_TIMEOUT_MS;
       this.lazyInputPollMs =
@@ -341,10 +411,12 @@
       const composerRoot = resolveComposerContainer(provider);
       const chipSelectors = (provider && provider.attachmentChipSelectors) || [];
       const searchRoot = composerRoot || document;
-      const chips = collectMatchingElements(chipSelectors, searchRoot, {
-        requireVisible: false,
-        excludeHistory: true
-      });
+      const chips = filterTopLevelElements(
+        collectMatchingElements(chipSelectors, searchRoot, {
+          requireVisible: false,
+          excludeHistory: true
+        })
+      );
       const baselineComposerText = composerRoot
         ? (composerRoot.innerText || composerRoot.textContent || '')
         : '';
@@ -623,7 +695,9 @@
      */
     async verifyDOMAttachment(provider, expectedCount, hooks = {}, fileObjects = [], baseline = null) {
       const logger = typeof hooks.logger === 'function' ? hooks.logger : ((_c, _l, _m, _d) => {});
-      this.transition(UPLOAD_STATES.VERIFYING_DOM, { expectedCount });
+      if (this.state !== UPLOAD_STATES.VERIFYING_DOM) {
+        this.transition(UPLOAD_STATES.VERIFYING_DOM, { expectedCount });
+      }
 
       if (typeof hooks.verifyFn === 'function') {
         const ok = await hooks.verifyFn(provider, expectedCount);
@@ -646,84 +720,113 @@
         ? baseline.baselineComposerText
         : '';
 
-      const isUploadBusy = (composerRoot) => {
-        if (busySelectors.length === 0) return false;
-        const root = composerRoot || document;
-        return collectMatchingElements(busySelectors, root, {
-          requireVisible: true,
-          excludeHistory: true
-        }).length > 0;
-      };
+      const baseTimeoutMs = this._hasCustomVerifyTimeout
+        ? this.verifyTimeoutMs
+        : Math.max(this.verifyTimeoutMs, 12000 + Math.min(20000, Math.max(0, expectedCount) * 2000));
+      const hardCapMs = this._hasCustomVerifyTimeout
+        ? Math.max(this.verifyTimeoutMs, Math.min(this.verifyTimeoutMs * 3, 15000))
+        : Math.max(baseTimeoutMs * 2, 45000);
+      const chipStabilizeMs = this.chipSettleMs < 50
+        ? Math.max(this.chipSettleMs * 2, 40)
+        : Math.min(Math.max(this.chipSettleMs * 4, 800), 1500);
 
-      const deadline = Date.now() + this.verifyTimeoutMs;
+      const startTime = Date.now();
+      let deadline = startTime + baseTimeoutMs;
+      const hardDeadline = startTime + hardCapMs;
       let firstPartialChipAt = null;
+      let lastChipGrowthAt = null;
+      let lastNewChipCount = 0;
+      let lastMatchedNameCount = 0;
+      let lastNameGrowthAt = null;
 
       while (Date.now() < deadline) {
         const composerRoot = resolveComposerContainer(provider) || (baseline && baseline.composerRoot) || null;
-        const isBusy = isUploadBusy(composerRoot);
+        const isBusy = isComposerUploadBusy(provider, composerRoot);
 
-        if (!isBusy) {
-          if (chipSelectors.length === 0) {
+        if (isBusy) {
+          deadline = Math.min(hardDeadline, Math.max(deadline, Date.now() + Math.min(3000, baseTimeoutMs)));
+        }
+
+        if (chipSelectors.length === 0) {
+          if (!isBusy) {
             await delay(Math.max(this.chipSettleMs, 250));
-            if (!isUploadBusy(composerRoot)) {
+            if (!isComposerUploadBusy(provider, composerRoot)) {
               this.transition(UPLOAD_STATES.READY, { verifiedCount: expectedCount, mode: 'timer_fallback' });
               return true;
             }
-          } else {
-            const searchRoot = composerRoot || document;
-            const currentChips = collectMatchingElements(chipSelectors, searchRoot, {
-              requireVisible: false,
-              excludeHistory: true
-            });
-            const newChips = currentChips.filter((el) => !existingChips.has(el));
+          }
+          await delay(200);
+          continue;
+        }
 
-            // 1. All expected new attachment chips appeared
-            if (newChips.length >= expectedCount) {
-              if (this.chipSettleMs > 0) {
-                await delay(this.chipSettleMs);
-              }
-              if (!isUploadBusy(composerRoot)) {
-                logger('UPLOAD', 'info', `Verified ${newChips.length} new attachment chip(s) in DOM`, { expectedCount });
-                this.transition(UPLOAD_STATES.READY, { verifiedCount: newChips.length, mode: 'dom_chip_delta' });
-                return true;
-              }
-              continue;
+        const searchRoot = composerRoot || document;
+        const currentChips = filterTopLevelElements(
+          collectMatchingElements(chipSelectors, searchRoot, {
+            requireVisible: false,
+            excludeHistory: true
+          })
+        );
+        const newChips = currentChips.filter((el) => !existingChips.has(el));
+        if (newChips.length > lastNewChipCount) {
+          lastNewChipCount = newChips.length;
+          if (firstPartialChipAt === null) firstPartialChipAt = Date.now();
+          lastChipGrowthAt = Date.now();
+          deadline = Math.min(hardDeadline, Math.max(deadline, Date.now() + Math.min(4000, baseTimeoutMs)));
+        }
+
+        if (!isBusy) {
+          // 1. All expected new attachment chips appeared
+          if (newChips.length >= expectedCount) {
+            if (this.chipSettleMs > 0) {
+              await delay(this.chipSettleMs);
             }
-
-            // 2. Partial new chips (e.g. provider collapses multi-file preview) stabilized without busy spinner
-            if (newChips.length > 0) {
-              if (firstPartialChipAt === null) {
-                firstPartialChipAt = Date.now();
-              } else if (Date.now() - firstPartialChipAt >= 600) {
-                logger('UPLOAD', 'info', `Verified ${newChips.length} stabilized attachment chip(s) in DOM`, { expectedCount });
-                this.transition(UPLOAD_STATES.READY, { verifiedCount: newChips.length, mode: 'dom_chip_partial' });
-                return true;
-              }
+            if (!isComposerUploadBusy(provider, composerRoot)) {
+              logger('UPLOAD', 'info', `Verified ${newChips.length} new attachment chip(s) in DOM`, { expectedCount });
+              this.transition(UPLOAD_STATES.READY, { verifiedCount: newChips.length, mode: 'dom_chip_delta' });
+              return true;
             }
+            continue;
+          }
 
-            // 3. Strictly composer-scoped file name match (never document.body!)
-            if (composerRoot && Array.isArray(fileObjects) && fileObjects.length > 0) {
-              const composerText = composerRoot.innerText || composerRoot.textContent || '';
-              if (composerText && composerText !== baselineComposerText) {
-                const newlyMatchedNames = fileObjects.filter(
-                  (f) => f && f.name && composerText.includes(f.name) && !baselineComposerText.includes(f.name)
-                );
-                if (newlyMatchedNames.length > 0) {
-                  if (this.chipSettleMs > 0) {
-                    await delay(this.chipSettleMs);
-                  }
-                  if (!isUploadBusy(composerRoot)) {
-                    logger('UPLOAD', 'info', `Verified ${newlyMatchedNames.length} file name(s) in composer text`);
-                    this.transition(UPLOAD_STATES.READY, { verifiedCount: newlyMatchedNames.length, mode: 'composer_file_name_match' });
-                    return true;
-                  }
-                  continue;
+          // 2. Partial new chips (e.g. provider collapses multi-file preview) stabilized without busy spinner
+          if (newChips.length > 0 && lastChipGrowthAt && Date.now() - lastChipGrowthAt >= chipStabilizeMs) {
+            logger('UPLOAD', 'info', `Verified ${newChips.length} stabilized attachment chip(s) in DOM`, { expectedCount });
+            this.transition(UPLOAD_STATES.READY, { verifiedCount: newChips.length, mode: 'dom_chip_partial' });
+            return true;
+          }
+
+          // 3. Strictly composer-scoped file name match (never document.body!)
+          if (composerRoot && Array.isArray(fileObjects) && fileObjects.length > 0) {
+            const composerText = composerRoot.innerText || composerRoot.textContent || '';
+            if (composerText && composerText !== baselineComposerText) {
+              const newlyMatchedNames = fileObjects.filter(
+                (f) => f && f.name && composerText.includes(f.name) && !baselineComposerText.includes(f.name)
+              );
+              if (newlyMatchedNames.length > lastMatchedNameCount) {
+                lastMatchedNameCount = newlyMatchedNames.length;
+                lastNameGrowthAt = Date.now();
+              }
+              const allMatched = newlyMatchedNames.length >= fileObjects.length;
+              const partialNamesStable =
+                newlyMatchedNames.length > 0 && lastNameGrowthAt && Date.now() - lastNameGrowthAt >= chipStabilizeMs;
+              if (allMatched || partialNamesStable) {
+                if (this.chipSettleMs > 0) {
+                  await delay(this.chipSettleMs);
                 }
+                if (!isComposerUploadBusy(provider, composerRoot)) {
+                  logger('UPLOAD', 'info', `Verified ${newlyMatchedNames.length} file name(s) in composer text`);
+                  this.transition(UPLOAD_STATES.READY, {
+                    verifiedCount: newlyMatchedNames.length,
+                    mode: 'composer_file_name_match'
+                  });
+                  return true;
+                }
+                continue;
               }
             }
           }
         }
-        await delay(200);
+        await delay(Math.min(200, Math.max(40, Math.floor(baseTimeoutMs / 4))));
       }
 
       return false;
@@ -750,18 +853,29 @@
       const normalized = this.validatePayloads(files);
       const fileObjects = this.prepareFiles(normalized);
       const baseline = this.captureBaseline(provider);
+      const logger = typeof hooks.logger === 'function' ? hooks.logger : ((_c, _l, _m, _d) => {});
 
       let attempts = 0;
       let lastStrategy = 'none';
 
       while (attempts <= this.maxRetries) {
         attempts++;
-        const injection = await this.injectIntoDOM(fileObjects, provider, {
-          ...hooks,
-          attempt: attempts,
-          lastStrategy
-        });
-        lastStrategy = injection.strategy;
+        const skipReinject =
+          attempts > 1 &&
+          typeof hooks.injectFn !== 'function' &&
+          typeof hooks.verifyFn !== 'function' &&
+          hasComposerUploadActivity(provider, baseline, fileObjects);
+
+        if (skipReinject) {
+          logger('UPLOAD', 'warn', `Retry #${attempts}: skipping re-injection because composer already shows uploaded/in-flight files`);
+        } else {
+          const injection = await this.injectIntoDOM(fileObjects, provider, {
+            ...hooks,
+            attempt: attempts,
+            lastStrategy
+          });
+          lastStrategy = injection.strategy;
+        }
 
         const verified = await this.verifyDOMAttachment(provider, fileObjects.length, hooks, fileObjects, baseline);
         if (verified && this.state === UPLOAD_STATES.READY) {
@@ -780,15 +894,8 @@
 
       // If injection succeeded and no busy progressbar is running, proceed with grace ready
       // to avoid leaving files stranded in the composer when provider chip markup changes
-      const busySelectors = (provider && provider.uploadBusySelectors) || [];
       const composerRoot = resolveComposerContainer(provider);
-      const isBusy =
-        busySelectors.length > 0 &&
-        typeof document !== 'undefined' &&
-        collectMatchingElements(busySelectors, composerRoot || document, {
-          requireVisible: true,
-          excludeHistory: true
-        }).length > 0;
+      const isBusy = isComposerUploadBusy(provider, composerRoot);
 
       if (lastStrategy !== 'none' && !isBusy) {
         this.transition(UPLOAD_STATES.READY, {
@@ -821,6 +928,9 @@
     sanitizeFileName,
     buildFileObject,
     resolveComposerContainer,
+    filterTopLevelElements,
+    isComposerUploadBusy,
+    hasComposerUploadActivity,
     filesMatchBatch,
     UploadStateMachine
   };
