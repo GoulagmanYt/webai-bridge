@@ -48,13 +48,19 @@
   const MESSAGE_HISTORY_SELECTOR =
     'user-query, .user-query-container, .user-query, [data-test-id*="user-query"], ' +
     '[data-message-author-role="user"], [data-testid="user-message"], ' +
-    'model-response, [data-message-author-role="assistant"], [data-testid="assistant-message"]';
+    '[data-user-message-bubble="true"], [data-chatgpt-search-unit-key$=":user"], [data-content-search-unit-key$=":user"], ' +
+    'model-response, [data-message-author-role="assistant"], [data-testid="assistant-message"], ' +
+    '[data-dil-response], [data-chatgpt-search-unit-key$=":assistant"], [data-content-search-unit-key$=":assistant"]';
 
-  const COMPOSER_CONTAINER_SELECTOR =
+  const PRIMARY_COMPOSER_SELECTOR =
     '.input-area-container, .initial-input-area-container, .initial-input-area, ' +
-    '.chat-input-container, form, fieldset, [class*="composer"], ' +
-    '[class*="inputWrapper"], [class*="inputFullContainer"], [class*="input-area"], ' +
-    '[class*="chat-input"], [role="region"]';
+    '.chat-input-container, form[data-chatgpt-composer], form, fieldset';
+
+  const FALLBACK_COMPOSER_SELECTOR =
+    '[class*="composer"], [class*="inputWrapper"], [class*="inputFullContainer"], ' +
+    '[class*="input-area"], [class*="chat-input"], [role="region"]';
+
+  const COMPOSER_CONTAINER_SELECTOR = `${PRIMARY_COMPOSER_SELECTOR}, ${FALLBACK_COMPOSER_SELECTOR}`;
 
   /**
    * Sleeps for a specified duration in ms.
@@ -93,7 +99,9 @@
 
   /**
    * Resolves the composer container around the active input element without ever matching
-   * the input element itself or falling back to document.body / document.documentElement.
+   * the input element itself, message history wrappers, or falling back to document.body / html.
+   * Prefers outer semantic containers (form/fieldset/.input-area-container) over inner rich-text
+   * wrappers like ChatGPT's `.composer-*` div so attachment cards and spinners are always included.
    * @param {object} provider
    * @returns {Element|null}
    */
@@ -101,24 +109,34 @@
     if (typeof document === 'undefined') return null;
     const inputEl = Providers && provider ? Providers.findInputElement(provider) : null;
     const isDocumentRoot = (el) => !el || el === document.body || el === document.documentElement;
+    const wrapsHistory = (el) => {
+      if (!el || typeof el.querySelector !== 'function') return false;
+      try {
+        return Boolean(el.querySelector(MESSAGE_HISTORY_SELECTOR));
+      } catch (_) {
+        return false;
+      }
+    };
 
     if (inputEl && inputEl.parentElement) {
       if (typeof inputEl.parentElement.closest === 'function') {
-        try {
-          const matched = inputEl.parentElement.closest(COMPOSER_CONTAINER_SELECTOR);
-          if (matched && !isDocumentRoot(matched)) {
-            return matched;
-          }
-        } catch (_) {}
+        for (const selector of [PRIMARY_COMPOSER_SELECTOR, FALLBACK_COMPOSER_SELECTOR]) {
+          try {
+            const matched = inputEl.parentElement.closest(selector);
+            if (matched && !isDocumentRoot(matched) && !wrapsHistory(matched)) {
+              return matched;
+            }
+          } catch (_) {}
+        }
       }
-      if (!isDocumentRoot(inputEl.parentElement)) {
+      if (!isDocumentRoot(inputEl.parentElement) && !wrapsHistory(inputEl.parentElement)) {
         return inputEl.parentElement;
       }
     }
 
     try {
-      const form = document.querySelector('form');
-      if (form && !isDocumentRoot(form)) {
+      const form = document.querySelector('form[data-chatgpt-composer], form');
+      if (form && !isDocumentRoot(form) && !wrapsHistory(form)) {
         return form;
       }
     } catch (_) {}
@@ -540,7 +558,20 @@
       }
 
       const fileInputSelectors = (provider && provider.fileInputSelectors) || ['input[type="file"]'];
+      const isEnabledInput = (el) => Boolean(el && !el.disabled && !(el.hasAttribute && el.hasAttribute('disabled')));
       const findFileInput = () => {
+        const composerRoot = resolveComposerContainer(provider);
+        const searchRoots = composerRoot ? [composerRoot, document] : [document];
+        for (const rootNode of searchRoots) {
+          if (!rootNode || typeof rootNode.querySelectorAll !== 'function') continue;
+          for (const sel of fileInputSelectors) {
+            try {
+              const list = Array.from(rootNode.querySelectorAll(sel));
+              const enabled = list.find(isEnabledInput);
+              if (enabled) return enabled;
+            } catch (_) {}
+          }
+        }
         if (Providers && typeof Providers.queryFirst === 'function') {
           const matched = Providers.queryFirst(fileInputSelectors, { requireVisible: false });
           if (matched) return matched;

@@ -500,6 +500,11 @@
         '[class*="reasoning"]'
       ],
       responseSelectors: [
+        '[data-chatgpt-search-unit-key$=":assistant"] [data-dil-response]',
+        '[data-content-search-unit-key$=":assistant"] [data-dil-response]',
+        '[data-dil-response]',
+        '[data-content-search-unit-key$=":assistant"]',
+        '[data-chatgpt-search-unit-key$=":assistant"]',
         '[data-message-author-role="assistant"] .markdown',
         '[data-message-author-role="assistant"]',
         '[data-testid="assistant-message"] .markdown',
@@ -512,6 +517,8 @@
         '.markdown'
       ],
       fileInputSelectors: [
+        'input[type="file"][multiple]:not([accept])',
+        'input[type="file"]:not([accept])',
         'input[type="file"][multiple]',
         'input[type="file"]'
       ],
@@ -529,14 +536,17 @@
         '[data-testid*="attachment"]',
         '[data-testid*="file-thumbnail"]',
         '[data-testid*="composer-file"]',
+        'form[data-chatgpt-composer] [data-above-composer-portal] [role="group"]',
         '.group.relative.inline-block',
         '.attachment-preview',
         'div[class*="attachment"]',
         'div[class*="file-preview"]',
         'form button[aria-label*="Remove" i]',
         'form button[aria-label*="Supprimer" i]',
+        'form button[aria-label*="Retirer" i]',
         'button[aria-label*="Remove" i]',
         'button[aria-label*="Supprimer" i]',
+        'button[aria-label*="Retirer" i]',
         'button[aria-label*="Fermer" i]',
         'button[aria-label*="Delete" i]',
         '[aria-label*="Remove file" i]',
@@ -548,6 +558,8 @@
         'form [role="progressbar"]',
         'form svg.animate-spin',
         'form [aria-busy="true"]',
+        '[data-above-composer-portal] [role="progressbar"]',
+        '[data-above-composer-portal] svg.animate-spin',
         '[data-testid*="attachment"] [role="progressbar"]',
         '[data-testid*="attachment"] svg.animate-spin',
         '[data-testid*="attachment"][aria-busy="true"]',
@@ -817,6 +829,11 @@
       '.user-query-container',
       '[data-test-id*="user-query"]',
       '.user-query',
+      '.sr-only',
+      '[data-user-message-bubble="true"]',
+      '[data-chatgpt-search-unit-key$=":user"]',
+      '[data-content-search-unit-key$=":user"]',
+      '.group\\/user-message',
       'details',
       '[data-testid="thought-content"]',
       '[data-testid="reasoning-summary"]',
@@ -830,10 +847,12 @@
       ...((provider && provider.artifactCleanupSelectors) || [])
     ];
 
+    let modifiedDom = false;
     for (const sel of cleanupSelectors) {
       try {
         const nodes = clone.querySelectorAll(sel);
         for (const node of nodes) {
+          modifiedDom = true;
           node.remove();
         }
       } catch (_) {
@@ -858,13 +877,34 @@
       if (!rawCode.trim().startsWith('```')) {
         const replacement = clone.ownerDocument.createTextNode(`\n\`\`\`${lang}\n${rawCode.replace(/\n$/, '')}\n\`\`\`\n`);
         pre.replaceWith(replacement);
+        modifiedDom = true;
       }
     }
 
-    // Chromium: clone.innerText on a detached DOM node can evaluate to empty string ""
-    // Prioritize non-empty innerText, then non-empty textContent, then target's live innerText/textContent
+    // Preserve visual line breaks for block elements inside detached clones (Chromium's clone.innerText omits block breaks)
+    if (clone.ownerDocument && typeof clone.ownerDocument.createTextNode === 'function' && typeof clone.querySelectorAll === 'function') {
+      try {
+        for (const br of clone.querySelectorAll('br')) {
+          br.replaceWith(clone.ownerDocument.createTextNode('\n'));
+        }
+        for (const block of clone.querySelectorAll('p, li, h1, h2, h3, h4, h5, h6, tr, blockquote')) {
+          const txt = block.textContent || '';
+          if (txt.trim().length > 0 && !txt.endsWith('\n')) {
+            block.appendChild(clone.ownerDocument.createTextNode('\n'));
+          }
+        }
+      } catch (_) {}
+    }
+
+    // Chromium: clone.innerText on a detached DOM node lacks CSS layout breaks or returns "".
+    // Use live target.innerText directly when nothing was stripped/rewritten on an attached element;
+    // otherwise use block-newline-preserved textContent / innerText from clone.
     let rawText = '';
-    if (typeof clone.innerText === 'string' && clone.innerText.trim().length > 0) {
+    if (!modifiedDom && target.isConnected && typeof target.innerText === 'string' && target.innerText.trim().length > 0) {
+      rawText = target.innerText;
+    } else if (typeof clone.textContent === 'string' && clone.textContent.trim().length > 0 && modifiedDom) {
+      rawText = clone.textContent;
+    } else if (typeof clone.innerText === 'string' && clone.innerText.trim().length > 0) {
       rawText = clone.innerText;
     } else if (typeof clone.textContent === 'string' && clone.textContent.trim().length > 0) {
       rawText = clone.textContent;
@@ -928,7 +968,7 @@
           let cur = btn.parentElement;
           let turn = null;
           for (let d = 0; d < 8 && cur && cur.tagName !== 'MAIN' && cur.tagName !== 'BODY'; d++) {
-            if (cur.querySelector && cur.querySelector('.markdown, pre, code')) {
+            if (cur.querySelector && cur.querySelector('.markdown, [data-dil-response], pre, code')) {
               turn = cur;
               break;
             }
@@ -941,11 +981,16 @@
             cur = cur.parentElement;
           }
           if (turn && !foundTurns.includes(turn)) {
+            const userSel =
+              'user-query, [data-test-id*="user-query"], .user-query, ' +
+              '[data-message-author-role="user"], [data-testid="user-message"], ' +
+              '[data-user-message-bubble="true"], [data-chatgpt-search-unit-key$=":user"], ' +
+              '[data-content-search-unit-key$=":user"]';
             const isUserTurn = Boolean(
               turn.tagName === 'USER-QUERY' ||
-              (turn.matches && turn.matches('user-query, [data-test-id*="user-query"], .user-query, [data-message-author-role="user"], [data-testid="user-message"]')) ||
-              (turn.closest && turn.closest('user-query, [data-test-id*="user-query"], .user-query, [data-message-author-role="user"], [data-testid="user-message"]')) ||
-              (turn.querySelector && turn.querySelector('user-query, [data-message-author-role="user"], [data-testid="user-message"], [data-test-id*="user-query"], .user-query'))
+              (turn.matches && turn.matches(userSel)) ||
+              (turn.closest && turn.closest(userSel)) ||
+              (turn.querySelector && turn.querySelector(userSel))
             );
             if (!isUserTurn) {
               foundTurns.push(turn);

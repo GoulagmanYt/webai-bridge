@@ -768,26 +768,30 @@
       }
     }
 
-    // 6. Composer HTML snippet (always resolved from parentElement so inputEl itself is not matched)
+    // 6. Composer HTML snippet (prefer outer semantic composer form/container via Upload.resolveComposerContainer)
     try {
-      const inputEl = Providers.findInputElement(provider);
-      const isDocRoot = (el) => !el || el === doc.body || el === doc.documentElement;
-      let composer = null;
-      if (inputEl && inputEl.parentElement) {
-        const candidate = inputEl.parentElement.closest
-          ? inputEl.parentElement.closest(
-              '.input-area-container, .initial-input-area-container, .initial-input-area, ' +
-              '.chat-input-container, form, fieldset, [class*="composer"], ' +
-              '[class*="inputWrapper"], [class*="inputFullContainer"], [class*="input-area"], ' +
-              '[class*="chat-input"], [role="region"]'
-            )
-          : null;
-        if (candidate && !isDocRoot(candidate)) {
-          composer = candidate;
-        } else if (inputEl.parentElement.parentElement && !isDocRoot(inputEl.parentElement.parentElement)) {
-          composer = inputEl.parentElement.parentElement;
-        } else if (!isDocRoot(inputEl.parentElement)) {
-          composer = inputEl.parentElement;
+      let composer = Upload && typeof Upload.resolveComposerContainer === 'function'
+        ? Upload.resolveComposerContainer(provider)
+        : null;
+      if (!composer) {
+        const inputEl = Providers.findInputElement(provider);
+        const isDocRoot = (el) => !el || el === doc.body || el === doc.documentElement;
+        if (inputEl && inputEl.parentElement) {
+          const candidate = inputEl.parentElement.closest
+            ? inputEl.parentElement.closest(
+                '.input-area-container, .initial-input-area-container, .initial-input-area, ' +
+                '.chat-input-container, form, fieldset, [class*="composer"], ' +
+                '[class*="inputWrapper"], [class*="inputFullContainer"], [class*="input-area"], ' +
+                '[class*="chat-input"], [role="region"]'
+              )
+            : null;
+          if (candidate && !isDocRoot(candidate)) {
+            composer = candidate;
+          } else if (inputEl.parentElement.parentElement && !isDocRoot(inputEl.parentElement.parentElement)) {
+            composer = inputEl.parentElement.parentElement;
+          } else if (!isDocRoot(inputEl.parentElement)) {
+            composer = inputEl.parentElement;
+          }
         }
       }
       if (composer && composer.outerHTML) {

@@ -1129,3 +1129,104 @@ test('Milestone 4.11 - Slow multi-file upload extends verification while busy an
     else globalThis.Event = savedEvent;
   }
 });
+
+test('Milestone 4.12 - ChatGPT 2026 composer form priority, general file input priority, and DilResponse block newline extraction', () => {
+  const savedDocument = globalThis.document;
+
+  try {
+    // 1. resolveComposerContainer must prefer outer <form data-chatgpt-composer> over inner div[class*="composer"]
+    const outerForm = {
+      tagName: 'FORM',
+      querySelector: () => null
+    };
+    const innerWrapper = {
+      tagName: 'DIV',
+      className: 'Frame-HWLnAH composer-NYb0tQ',
+      closest(sel) {
+        if (sel.includes('form[data-chatgpt-composer]')) return outerForm;
+        if (sel.includes('[class*="composer"]')) return innerWrapper;
+        return null;
+      }
+    };
+    const editor = {
+      tagName: 'DIV',
+      parentElement: innerWrapper,
+      getBoundingClientRect: () => ({ width: 400, height: 40 }),
+      getAttribute: () => null
+    };
+
+    globalThis.document = {
+      body: { tagName: 'BODY' },
+      documentElement: { tagName: 'HTML' },
+      querySelector: () => outerForm,
+      querySelectorAll(sel) {
+        if (sel.includes('prompt-textarea') || sel.includes('ProseMirror')) return [editor];
+        return [];
+      }
+    };
+    const resolved = UploadMod.resolveComposerContainer(ProvidersMod.PROVIDERS.chatgpt);
+    assert.equal(resolved, outerForm, 'Composer container must resolve to outer <form>, not inner ProseMirror wrapper');
+
+    // 2. ChatGPT fileInputSelectors prioritize unrestricted multi-file input ahead of accept-restricted inputs
+    const gptFileSelectors = ProvidersMod.PROVIDERS.chatgpt.fileInputSelectors;
+    assert.ok(
+      gptFileSelectors.indexOf('input[type="file"][multiple]:not([accept])') <
+      gptFileSelectors.indexOf('input[type="file"][multiple]')
+    );
+
+    // 3. ChatGPT responseSelectors prioritize DilResponse / :assistant search units ahead of legacy .markdown
+    const gptRespSelectors = ProvidersMod.PROVIDERS.chatgpt.responseSelectors;
+    assert.ok(
+      gptRespSelectors.indexOf('[data-chatgpt-search-unit-key$=":assistant"] [data-dil-response]') <
+      gptRespSelectors.indexOf('[data-message-author-role="assistant"] .markdown')
+    );
+
+    // 4. extractCleanResponse preserves block newlines (<p>, <li>) on detached clones after stripping .sr-only
+    const fakeTextNodes = [];
+    const blockChildren = [];
+    const srHeading = { remove() { srHeading.removed = true; } };
+    const p1 = {
+      tagName: 'P',
+      _txt: '5 files:',
+      get textContent() { return this._txt; },
+      appendChild(n) { this._txt += n.textContent; }
+    };
+    const p2 = {
+      tagName: 'P',
+      _txt: 'TASK_COMPLETE',
+      get textContent() { return this._txt; },
+      appendChild(n) { this._txt += n.textContent; }
+    };
+    blockChildren.push(p1, p2);
+    const fakeClone = {
+      ownerDocument: {
+        createTextNode: (t) => {
+          const n = { textContent: t };
+          fakeTextNodes.push(n);
+          return n;
+        }
+      },
+      querySelectorAll(sel) {
+        if (sel === '.sr-only') return [srHeading];
+        if (sel.startsWith('p,')) return blockChildren;
+        return [];
+      },
+      get textContent() {
+        return blockChildren.map((b) => b.textContent).join('');
+      },
+      get innerText() {
+        return '5 files:TASK_COMPLETE';
+      }
+    };
+    const liveTarget = {
+      isConnected: true,
+      cloneNode: () => fakeClone
+    };
+    const extracted = ProvidersMod.extractCleanResponse(liveTarget, ProvidersMod.PROVIDERS.chatgpt);
+    assert.equal(srHeading.removed, true);
+    assert.equal(extracted, '5 files:\nTASK_COMPLETE');
+  } finally {
+    if (savedDocument === undefined) delete globalThis.document;
+    else globalThis.document = savedDocument;
+  }
+});
