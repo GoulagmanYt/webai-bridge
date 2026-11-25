@@ -579,9 +579,16 @@
         return typeof document.querySelector === 'function' ? document.querySelector('input[type="file"]') : null;
       };
 
-      // Helper to clear stale value and populate an <input type="file">
+      // Helper to validate active state, clear stale value, and populate an <input type="file">
       const tryInputFileElement = (inputEl) => {
         if (!inputEl || typeof DataTransfer !== 'function') return false;
+        if (!isEnabledInput(inputEl)) {
+          logger('UPLOAD', 'debug', 'Skipping disabled input[type="file"]', {
+            id: inputEl.id || null,
+            ariaLabel: typeof inputEl.getAttribute === 'function' ? inputEl.getAttribute('aria-label') : null
+          });
+          return false;
+        }
         try {
           inputEl.value = '';
         } catch (_) {
@@ -602,8 +609,8 @@
       // Tier 1: Direct <input type="file"> present in DOM
       let fileInput = findFileInput();
 
-      // Only preserve existing input.files on retry attempts when the batch matches identically
-      if (fileInput && attempt > 1 && filesMatchBatch(fileInput.files, fileObjects)) {
+      // Only preserve existing input.files on retry attempts when enabled and the batch matches identically
+      if (fileInput && isEnabledInput(fileInput) && attempt > 1 && filesMatchBatch(fileInput.files, fileObjects)) {
         logger('UPLOAD', 'debug', 'Tier 1 retry preserved identical matching batch on input[type="file"]');
         return { strategy: 'direct_file_input_preserved' };
       }
@@ -639,6 +646,13 @@
           }
           if (Date.now() >= pollDeadline) break;
           await delay(this.lazyInputPollMs);
+        }
+
+        // Dismiss any trigger popup menu before falling through to Tier 3 paste/drop
+        if (typeof KeyboardEvent === 'function' && typeof document.dispatchEvent === 'function') {
+          try {
+            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true }));
+          } catch (_) {}
         }
       }
 
@@ -924,11 +938,15 @@
       }
 
       // If injection succeeded and no busy progressbar is running, proceed with grace ready
-      // to avoid leaving files stranded in the composer when provider chip markup changes
+      // only when the provider has no chip selectors OR real DOM upload evidence appeared beyond baseline
       const composerRoot = resolveComposerContainer(provider);
       const isBusy = isComposerUploadBusy(provider, composerRoot);
+      const chipSelectors = (provider && provider.attachmentChipSelectors) || [];
+      const hasEvidence =
+        chipSelectors.length === 0 ||
+        hasComposerUploadActivity(provider, baseline, fileObjects);
 
-      if (lastStrategy !== 'none' && !isBusy) {
+      if (lastStrategy !== 'none' && !isBusy && hasEvidence) {
         this.transition(UPLOAD_STATES.READY, {
           verifiedCount: fileObjects.length,
           mode: 'grace_proceed',
@@ -943,7 +961,8 @@
       }
 
       const err = new Error(
-        `Upload verification timed out after ${attempts} attempt(s) on provider "${provider ? provider.id : 'unknown'}"`
+        `Upload verification timed out after ${attempts} attempt(s) on provider "${provider ? provider.id : 'unknown'}"` +
+        (!hasEvidence ? ': no attachment evidence detected in composer (file input may be disabled or attachment limit reached)' : '')
       );
       err.code = 'ERR_UPLOAD_VERIFY_TIMEOUT';
       this.lastError = err;

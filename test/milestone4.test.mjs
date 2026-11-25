@@ -1230,3 +1230,151 @@ test('Milestone 4.12 - ChatGPT 2026 composer form priority, general file input p
     else globalThis.document = savedDocument;
   }
 });
+
+test('Milestone 4.13 - Disabled file inputs fall back to Tier 3 paste/drop and fail honestly with 0 DOM upload evidence', async () => {
+  const savedDocument = globalThis.document;
+  const savedWindow = globalThis.window;
+  const savedDataTransfer = globalThis.DataTransfer;
+  const savedEvent = globalThis.Event;
+  const savedClipboardEvent = globalThis.ClipboardEvent;
+  const savedDragEvent = globalThis.DragEvent;
+
+  class MockDataTransfer {
+    constructor() {
+      const itemsList = [];
+      this.files = itemsList;
+      this.items = { add: (f) => itemsList.push(f) };
+    }
+  }
+  class MockEvent {
+    constructor(type, init = {}) {
+      this.type = type;
+      Object.assign(this, init);
+    }
+  }
+
+  try {
+    globalThis.DataTransfer = MockDataTransfer;
+    globalThis.Event = MockEvent;
+    globalThis.ClipboardEvent = MockEvent;
+    globalThis.DragEvent = MockEvent;
+    globalThis.window = {
+      getComputedStyle: () => ({ display: 'block', visibility: 'visible', opacity: '1' })
+    };
+
+    let disabledInputChanged = false;
+    let pasteDispatched = false;
+    let dropDispatched = false;
+
+    const disabledFileInput = {
+      disabled: true,
+      hasAttribute: (a) => a === 'disabled',
+      getAttribute: () => null,
+      files: [],
+      dispatchEvent() {
+        disabledInputChanged = true;
+        return true;
+      }
+    };
+
+    let attachChipsOnPaste = false;
+    const composerForm = {
+      tagName: 'FORM',
+      innerText: '',
+      querySelector: () => null,
+      querySelectorAll(sel) {
+        if (sel.includes('progressbar') || sel.includes('animate-spin') || sel.includes('aria-busy') || sel.includes('stroke-dasharray')) {
+          return [];
+        }
+        if (attachChipsOnPaste && (sel.includes('attachment') || sel.includes('Remove'))) {
+          return [{ tagName: 'DIV', contains: () => false }];
+        }
+        return [];
+      },
+      dispatchEvent(evt) {
+        if (evt.type === 'drop') dropDispatched = true;
+        return true;
+      }
+    };
+    const editorEl = {
+      tagName: 'DIV',
+      getBoundingClientRect: () => ({ width: 300, height: 40 }),
+      getAttribute: () => null,
+      parentElement: {
+        closest: () => composerForm
+      },
+      focus() {},
+      dispatchEvent(evt) {
+        if (evt.type === 'paste') pasteDispatched = true;
+        return true;
+      }
+    };
+
+    globalThis.document = {
+      body: { tagName: 'BODY' },
+      documentElement: { tagName: 'HTML' },
+      activeElement: editorEl,
+      querySelector: (sel) => (sel.includes('form') ? composerForm : disabledFileInput),
+      querySelectorAll(sel) {
+        if (sel.includes('input[type="file"]')) return [disabledFileInput];
+        if (sel.includes('prompt-textarea') || sel.includes('ProseMirror')) return [editorEl];
+        return [];
+      },
+      dispatchEvent: () => true
+    };
+
+    // 1. Disabled input must NOT succeed silently via grace_proceed when 0 chips appear: must reject with ERR_UPLOAD_VERIFY_TIMEOUT
+    const smBlocked = new UploadMod.UploadStateMachine({
+      verifyTimeoutMs: 40,
+      chipSettleMs: 10,
+      lazyInputTimeoutMs: 30,
+      maxRetries: 1
+    });
+    await assert.rejects(
+      () => smBlocked.executeUpload(
+        [{ name: 'test.txt', content: 'hello', encoding: 'utf8' }],
+        ProvidersMod.PROVIDERS.chatgpt
+      ),
+      (err) => err.code === 'ERR_UPLOAD_VERIFY_TIMEOUT'
+    );
+    assert.equal(disabledInputChanged, false, 'Disabled <input type="file"> must never receive files');
+    assert.equal(pasteDispatched, true, 'Disabled input must fall through to Tier 3 ClipboardEvent(paste)');
+    assert.equal(dropDispatched, true, 'Retry after paste must fall back to Tier 3 DragEvent(drop)');
+
+    // 2. When paste DOES produce a real composer chip despite disabled <input type="file">, upload succeeds via clipboard_paste
+    pasteDispatched = false;
+    editorEl.dispatchEvent = (evt) => {
+      if (evt.type === 'paste') {
+        pasteDispatched = true;
+        attachChipsOnPaste = true;
+      }
+      return true;
+    };
+    const smPasteOk = new UploadMod.UploadStateMachine({
+      verifyTimeoutMs: 80,
+      chipSettleMs: 10,
+      lazyInputTimeoutMs: 30,
+      maxRetries: 1
+    });
+    const okRes = await smPasteOk.executeUpload(
+      [{ name: 'test.txt', content: 'hello', encoding: 'utf8' }],
+      ProvidersMod.PROVIDERS.chatgpt
+    );
+    assert.equal(pasteDispatched, true);
+    assert.equal(okRes.strategy, 'clipboard_paste');
+    assert.equal(okRes.state, UploadMod.UPLOAD_STATES.READY);
+  } finally {
+    if (savedDocument === undefined) delete globalThis.document;
+    else globalThis.document = savedDocument;
+    if (savedWindow === undefined) delete globalThis.window;
+    else globalThis.window = savedWindow;
+    if (savedDataTransfer === undefined) delete globalThis.DataTransfer;
+    else globalThis.DataTransfer = savedDataTransfer;
+    if (savedEvent === undefined) delete globalThis.Event;
+    else globalThis.Event = savedEvent;
+    if (savedClipboardEvent === undefined) delete globalThis.ClipboardEvent;
+    else globalThis.ClipboardEvent = savedClipboardEvent;
+    if (savedDragEvent === undefined) delete globalThis.DragEvent;
+    else globalThis.DragEvent = savedDragEvent;
+  }
+});
